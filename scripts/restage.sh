@@ -5,8 +5,10 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+# Stage the same artifact that gets installed: compiled output + manifest, no TypeScript source.
+npm run build --silent
 rm -rf .data/plugin && mkdir -p .data/plugin
-cp -R index.ts setup-entry.ts src openclaw.plugin.json package.json .data/plugin/
+cp -R dist openclaw.plugin.json package.json .data/plugin/
 
 since="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 docker compose --profile gateway restart openclaw-gateway >/dev/null

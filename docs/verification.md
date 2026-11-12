@@ -33,6 +33,12 @@ Also confirmed from the live system:
 3. **The default session scope shares one session between all customers.** OpenClaw's `session.dmScope` defaults to `main`, which would mix customers' context. The plugin refuses to start unless a per-peer scope is configured (override: `allowSharedSession`).
 4. **Host notices arrive as ordinary replies.** The SDK strips the `isError` flag before calling `deliver`, and OpenClaw renders its own failures as `⚠️ ...`. Without a guard those reached the customer (observed once, then fixed). The plugin treats a reply that starts with `⚠️` as a failure and hands off.
 
+## Install from a package
+
+`openclaw plugins install git:...` failed on the first attempt with `package install requires compiled runtime output for TypeScript entry ./index.ts`. OpenClaw only runs TypeScript source for local paths and source checkouts; an installed package needs compiled JavaScript. The repo now builds to `dist/` (`npm run build`), declares it through `openclaw.runtimeExtensions` and `openclaw.runtimeSetupEntry`, and commits `dist/`.
+
+Checked in a clean OpenClaw 2026.11.3 container, installing from a clone-like folder (source plus `dist/`): the compiled-output check passes, then the install asks for capability consent, so `--accept-capabilities` is required. With it, `plugins inspect chatwoot` reports `Source: ~/.openclaw/extensions/chatwoot/dist/index.js`, status enabled, capability `channel: chatwoot`. The dev stack now loads only `dist/` + manifest + `package.json` (no TypeScript), and the smoke test passes against that. Not run: the `git:` fetch itself (the repo had not been pushed).
+
 ## Covered only by unit tests
 
 76 tests (`npm test`) cover signature verification, replay window, filtering, dedupe (including persistence across a simulated restart), per-conversation ordering, handoff ordering and failure handling, reply timeout with a late reply, chunking, API retry/backoff, and config validation. These run against fakes.

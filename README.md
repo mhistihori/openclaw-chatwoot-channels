@@ -33,9 +33,31 @@ The conversation is set to `open` (which stops the bot), the customer gets a mes
 
 Setting the status is the first step, so a failure in the courtesy message, note or label never leaves the bot running.
 
+## Install
+
+OpenClaw only installs a plugin from git or npm when compiled JavaScript ships with it, so this repo commits `dist/`. Run on the gateway host:
+
+```bash
+openclaw plugins install git:github.com/mhistihori/openclaw-chatwoot-channels@main --accept-capabilities
+```
+
+You will be asked to confirm the source (add `--force` for a non-interactive install). `--accept-capabilities` grants the channel capability the plugin declares. Then add the configuration below and restart the gateway. For local development use `openclaw plugins install --link <path>` instead, which runs the TypeScript source directly.
+
+Installing a compiled copy from a clone-like folder was verified in a clean OpenClaw 2026.11.3 container (`plugins inspect chatwoot` reports `Source: .../dist/index.js`, enabled). The `git:` fetch itself was not run, because the repo had not been pushed when this was written.
+
+### Releasing a change
+
+`dist/` must match the source, or installs get stale code. Before every push:
+
+```bash
+npm run release:check   # typecheck, unit tests, then rebuild dist/
+```
+
+then commit the updated `dist/`. A test (`tests/packaging.test.ts`) rebuilds into a temp folder and fails if the committed `dist/` differs.
+
 ## Configuration
 
-Install the plugin, then configure `channels.chatwoot` in `openclaw.json`:
+Then configure `channels.chatwoot` in `openclaw.json`:
 
 ```json5
 {

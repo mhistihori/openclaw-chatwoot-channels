@@ -32,9 +32,10 @@ chmod 600 .env
 set -a; . ./.env; set +a
 CHATWOOT_PORT="${CHATWOOT_PORT:-3100}"
 
-# 2. stage the plugin (source only, no node_modules: the gateway provides its own SDK)
+# 2. stage the plugin as it ships: compiled output + manifest (the gateway provides its own SDK)
+npm run build --silent
 rm -rf .data/plugin && mkdir -p .data/plugin
-cp -R index.ts setup-entry.ts src openclaw.plugin.json package.json .data/plugin/
+cp -R dist openclaw.plugin.json package.json .data/plugin/
 
 # 3. Chatwoot
 echo "-> starting Chatwoot (first run pulls images and migrates the database; this takes a few minutes)"

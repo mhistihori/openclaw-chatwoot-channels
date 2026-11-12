@@ -12,11 +12,15 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "check": "npm run typecheck && npm run test"
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
+    "check": "npm run typecheck && npm run test",
+    "release:check": "npm run check && npm run build"
   },
   "openclaw": {
     "extensions": ["./index.ts"],
+    "runtimeExtensions": ["./dist/index.js"],
     "setupEntry": "./setup-entry.ts",
+    "runtimeSetupEntry": "./dist/setup-entry.js",
     "channel": {
       "id": "chatwoot",
       "label": "Chatwoot",
