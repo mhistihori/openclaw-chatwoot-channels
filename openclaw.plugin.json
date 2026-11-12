@@ -1,0 +1,57 @@
+{
+  "id": "chatwoot",
+  "channels": ["chatwoot"],
+  "name": "Chatwoot",
+  "description": "Chatwoot channel plugin: two-way customer support conversations with handoff to human agents.",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  },
+  "channelConfigs": {
+    "chatwoot": {
+      "schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "baseUrl": { "type": "string", "description": "Chatwoot base URL, e.g. https://chat.example.com" },
+          "accountId": { "type": ["integer", "string"], "description": "Chatwoot account id" },
+          "apiToken": { "type": "string", "description": "Chatwoot user or AgentBot access token" },
+          "webhookSecret": { "type": "string", "description": "Secret used to verify X-Chatwoot-Signature" },
+          "allowUnsignedWebhooks": { "type": "boolean", "description": "Development only: accept unsigned webhooks" },
+          "webhookPath": { "type": "string", "description": "Gateway path for the webhook (default /chatwoot/webhook)" },
+          "allowedInboxIds": { "type": "array", "items": { "type": ["integer", "string"] } },
+          "respondStatuses": {
+            "type": "array",
+            "items": { "type": "string", "enum": ["pending", "open", "resolved", "snoozed"] }
+          },
+          "replyTimeoutMs": { "type": "integer", "minimum": 1000 },
+          "replayWindowSeconds": { "type": "integer", "minimum": 1 },
+          "stateDir": { "type": "string", "description": "Directory for the durable dedupe log" },
+          "allowSharedSession": {
+            "type": "boolean",
+            "description": "Allow all customers to share one agent session (not recommended)"
+          },
+          "handoff": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "keywords": { "type": "array", "items": { "type": "string" } },
+              "marker": { "type": "string" },
+              "message": { "type": "string" },
+              "note": { "type": "string" },
+              "label": { "type": "string" }
+            }
+          }
+        }
+      },
+      "uiHints": {
+        "baseUrl": { "label": "Chatwoot URL" },
+        "accountId": { "label": "Chatwoot account id" },
+        "apiToken": { "label": "API access token", "sensitive": true },
+        "webhookSecret": { "label": "Webhook secret", "sensitive": true },
+        "allowUnsignedWebhooks": { "label": "Allow unsigned webhooks (dev only)", "advanced": true }
+      }
+    }
+  }
+}

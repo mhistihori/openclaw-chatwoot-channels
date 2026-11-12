@@ -1,0 +1,113 @@
+# Local development stack: Chatwoot + OpenClaw gateway with this plugin loaded.
+# Start it with scripts/dev-up.sh (it generates secrets, seeds Chatwoot, then starts the gateway).
+# Everything binds to 127.0.0.1 only.
+name: ocw-dev
+
+x-chatwoot-env: &chatwoot-env
+  RAILS_ENV: production
+  NODE_ENV: production
+  INSTALLATION_ENV: docker
+  SECRET_KEY_BASE: ${SECRET_KEY_BASE:?run scripts/dev-up.sh}
+  FRONTEND_URL: http://localhost:${CHATWOOT_PORT:-3100}
+  FORCE_SSL: "false"
+  ENABLE_ACCOUNT_SIGNUP: "false"
+  POSTGRES_HOST: postgres
+  POSTGRES_DATABASE: chatwoot
+  POSTGRES_USERNAME: chatwoot
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?run scripts/dev-up.sh}
+  REDIS_URL: redis://:${REDIS_PASSWORD:?run scripts/dev-up.sh}@redis:6379
+  REDIS_PASSWORD: ${REDIS_PASSWORD}
+  RAILS_LOG_TO_STDOUT: "true"
+  LOG_LEVEL: info
+  # Chatwoot refuses webhook targets that resolve to private IPs (SSRF protection), and the
+  # gateway is a private container hostname here. Local development only: in production the
+  # gateway sits behind a public hostname and this must stay off.
+  SAFE_FETCH_ALLOW_PRIVATE_NETWORK: "true"
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: chatwoot
+      POSTGRES_USER: chatwoot
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?run scripts/dev-up.sh}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U chatwoot -d chatwoot"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:?run scripts/dev-up.sh}"]
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" ping | grep PONG"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+
+  chatwoot-prepare:
+    image: chatwoot/chatwoot:latest
+    command: ["bundle", "exec", "rails", "db:chatwoot_prepare"]
+    environment: *chatwoot-env
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    restart: "no"
+
+  chatwoot-rails:
+    image: chatwoot/chatwoot:latest
+    entrypoint: ["docker/entrypoints/rails.sh"]
+    command: ["bundle", "exec", "rails", "s", "-p", "3000", "-b", "0.0.0.0"]
+    environment: *chatwoot-env
+    ports:
+      - "127.0.0.1:${CHATWOOT_PORT:-3100}:3000"
+    volumes:
+      - ./docker/chatwoot:/seed:ro
+    depends_on:
+      chatwoot-prepare: { condition: service_completed_successfully }
+    restart: unless-stopped
+
+  chatwoot-sidekiq:
+    image: chatwoot/chatwoot:latest
+    command: ["bundle", "exec", "sidekiq", "-C", "config/sidekiq.yml"]
+    environment: *chatwoot-env
+    depends_on:
+      chatwoot-prepare: { condition: service_completed_successfully }
+    restart: unless-stopped
+
+  # Stand-in model for tests (see docker/mock-llm/server.mjs). Used when .env has no provider key.
+  mock-llm:
+    image: node:24-alpine
+    profiles: ["gateway"]
+    command: ["node", "/app/server.mjs"]
+    volumes:
+      - ./docker/mock-llm:/app:ro
+    restart: unless-stopped
+
+  # Started by scripts/dev-up.sh once Chatwoot is seeded and openclaw.json exists.
+  openclaw-gateway:
+    image: ghcr.io/openclaw/openclaw:${OPENCLAW_VERSION:-2026.11.3}
+    profiles: ["gateway"]
+    environment:
+      OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+    ports:
+      - "127.0.0.1:${OPENCLAW_PORT:-18789}:18789"
+    volumes:
+      - ./.data/openclaw:/home/node/.openclaw
+      # Staged copy of the plugin (no node_modules), so the host's own SDK is the one that loads.
+      - ./.data/plugin:/plugin:ro
+    depends_on:
+      - chatwoot-rails
+      - mock-llm
+    restart: unless-stopped
+
+volumes:
+  pgdata:

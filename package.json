@@ -1,0 +1,40 @@
+{
+  "name": "openclaw-chatwoot-channels",
+  "version": "0.1.0",
+  "description": "OpenClaw channel plugin for Chatwoot: two-way customer support conversations with handoff to human agents.",
+  "license": "MIT",
+  "type": "module",
+  "private": true,
+  "engines": {
+    "node": ">=24.16.0"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "check": "npm run typecheck && npm run test"
+  },
+  "openclaw": {
+    "extensions": ["./index.ts"],
+    "setupEntry": "./setup-entry.ts",
+    "channel": {
+      "id": "chatwoot",
+      "label": "Chatwoot",
+      "blurb": "Connect OpenClaw to Chatwoot inboxes for customer support."
+    }
+  },
+  "peerDependencies": {
+    "openclaw": ">=2026.11.3"
+  },
+  "peerDependenciesMeta": {
+    "openclaw": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "openclaw": "2026.11.3",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
+  }
+}
