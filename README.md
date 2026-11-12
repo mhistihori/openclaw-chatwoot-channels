@@ -41,7 +41,15 @@ OpenClaw only installs a plugin from git or npm when compiled JavaScript ships w
 openclaw plugins install git:github.com/mhistihori/openclaw-chatwoot-channels@main --accept-capabilities
 ```
 
-You will be asked to confirm the source (add `--force` for a non-interactive install). `--accept-capabilities` grants the channel capability the plugin declares. Then add the configuration below and restart the gateway. For local development use `openclaw plugins install --link <path>` instead, which runs the TypeScript source directly.
+You will be asked to confirm the source (add `--force` for a non-interactive install). `--accept-capabilities` grants the channel capability the plugin declares.
+
+A freshly installed plugin has no configuration yet. That is a normal state: it stays idle and logs `channels.chatwoot is missing — webhook route not registered`. Add the configuration below, then apply it:
+
+```bash
+openclaw plugins reload chatwoot
+```
+
+Run that reload after every change to `channels.chatwoot` as well (webhook secret, inbox ids, ...): the webhook route reads its settings when the plugin loads. For local development use `openclaw plugins install --link <path>` instead, which runs the TypeScript source directly.
 
 Installing a compiled copy from a clone-like folder was verified in a clean OpenClaw 2026.11.3 container (`plugins inspect chatwoot` reports `Source: .../dist/index.js`, enabled). The `git:` fetch itself was not run, because the repo had not been pushed when this was written.
 
@@ -50,7 +58,7 @@ Installing a compiled copy from a clone-like folder was verified in a clean Open
 `dist/` must match the source, or installs get stale code. Before every push:
 
 ```bash
-npm run release:check   # typecheck, unit tests, then rebuild dist/
+npm run release:check   # rebuild dist/, then typecheck and run the unit tests
 ```
 
 then commit the updated `dist/`. A test (`tests/packaging.test.ts`) rebuilds into a temp folder and fails if the committed `dist/` differs.
@@ -125,7 +133,7 @@ Notes:
 - Customer text is untrusted input to an agent. Keep the agent's tools minimal for this channel, and do not give it tools that act on other customers' data.
 - Use a dedicated Chatwoot token for the bot, separate from any human's.
 - The raw body is what is signed, so put no body-rewriting proxy between Chatwoot and the gateway.
-- Internal OpenClaw failures (for example a missing model credential) are never shown to the customer. They trigger a handoff and the reason goes into a private note.
+- Internal OpenClaw failures (for example a missing model credential or a model outage) are never shown to the customer. A `reply_payload_sending` hook, active only for this channel, cancels error replies before delivery, and the conversation is handed to a human with the reason in a private note. Replies that start with `⚠️` are treated the same way.
 - `openclaw.json` holds the Chatwoot token and webhook secret in plaintext unless you use OpenClaw's SecretRefs. Prefer SecretRefs outside local development.
 
 ## Development

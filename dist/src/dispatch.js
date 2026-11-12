@@ -1,26 +1,24 @@
 import { dispatchInboundDirectDm } from "openclaw/plugin-sdk/channel-inbound";
 import { CHANNEL_ID } from "./channel.js";
+import { judgeReply } from "./failures.js";
 import { formatPeerId } from "./target.js";
-/**
- * OpenClaw renders its own failures as "⚠️ <explanation>" and delivers them like any other
- * reply, without a flag we can see. An agent that starts a customer-facing answer with ⚠️ is
- * also treated as a failure: that errs towards a human taking over, which is the safe side.
- */
-export function looksLikeHostNotice(text) {
-    return typeof text === "string" && /^\s*⚠️/u.test(text);
-}
 /**
  * Bridge from a filtered Chatwoot message to an OpenClaw agent turn.
  *
  * `dispatchInboundDirectDm` resolves the route (agent + session), records the
  * inbound message, runs the agent and calls `deliver` for every reply payload.
  * Each Chatwoot conversation is one direct peer, so it gets its own session.
+ *
+ * Failures: the host reports its own errors as ordinary replies, and strips the flag that
+ * would identify them before calling `deliver`. The `reply_payload_sending` hook registered in
+ * index.ts still sees the raw payload, cancels the error and records it in `failures`; after
+ * the turn we read that record and throw, so the handler hands the conversation to a human.
  */
-export function createRunAgent(api) {
+export function createRunAgent(api, failures) {
     return async (job, deliver) => {
         let dispatchError;
         const pending = [];
-        await dispatchInboundDirectDm({
+        const { route } = await dispatchInboundDirectDm({
             cfg: api.config,
             channel: CHANNEL_ID,
             channelLabel: "Chatwoot",
@@ -37,15 +35,12 @@ export function createRunAgent(api) {
             // inbox, and a conversation status the bot is allowed to answer.
             inboundAccessAuthorized: true,
             deliver: async (payload) => {
-                // `dispatchInboundDirectDm` strips the isError/isReasoning flags before calling us (verified
-                // against 2026.11.3), so these casts only matter if a future host stops doing that.
-                const flags = payload;
-                // The host also routes its own notices through `deliver` (for example "couldn't sign in
-                // to the AI service"). Customers must never see them: they become a handoff, and the
-                // text goes to the human agent's private note instead.
-                if (flags.isReasoning || flags.isCommentary || flags.isCompactionNotice)
+                // Second line of defence. The hook normally cancels errors before they get here, and
+                // the host strips the flags, so in practice this only catches the "⚠️" prefix.
+                const verdict = judgeReply(payload);
+                if (verdict === "drop")
                     return;
-                if (flags.isError || looksLikeHostNotice(payload.text)) {
+                if (verdict === "fail") {
                     dispatchError ??= new Error(payload.text?.trim() || "agent reported an error");
                     return;
                 }
@@ -64,6 +59,9 @@ export function createRunAgent(api) {
             },
         });
         await Promise.all(pending);
+        const cancelled = failures.take(route.sessionKey);
+        if (cancelled !== undefined)
+            dispatchError ??= new Error(cancelled);
         // Surface failures to the handler so it can hand the conversation to a human.
         if (dispatchError !== undefined)
             throw dispatchError instanceof Error ? dispatchError : new Error(String(dispatchError));

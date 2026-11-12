@@ -37,7 +37,10 @@ async function sendText(cfg: OpenClawConfig, to: string, text: string): Promise<
 }
 
 const accountConfig: NonNullable<ChannelPlugin<ResolvedAccount>["config"]> = {
-  listAccountIds: () => ["default"],
+  // Report an account only when the channel is configured. A freshly installed plugin has no
+  // `channels.chatwoot` yet; listing "default" anyway made the gateway try to start it and
+  // fail with "channels.chatwoot is missing".
+  listAccountIds: (cfg) => (inspectChatwootConfig(cfg).configured ? ["default"] : []),
   resolveAccount,
   inspectAccount(cfg) {
     const { configured, tokenStatus } = inspectChatwootConfig(cfg);

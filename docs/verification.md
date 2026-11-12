@@ -39,9 +39,17 @@ Also confirmed from the live system:
 
 Checked in a clean OpenClaw 2026.11.3 container, installing from a clone-like folder (source plus `dist/`): the compiled-output check passes, then the install asks for capability consent, so `--accept-capabilities` is required. With it, `plugins inspect chatwoot` reports `Source: ~/.openclaw/extensions/chatwoot/dist/index.js`, status enabled, capability `channel: chatwoot`. The dev stack now loads only `dist/` + manifest + `package.json` (no TypeScript), and the smoke test passes against that. Not run: the `git:` fetch itself (the repo had not been pushed).
 
+## Unconfigured install and error replies
+
+**Install before configuring.** With no `channels.chatwoot` the gateway reported `channel startup failed: chatwoot: channels.chatwoot is missing` (and `Plugin operation failed during activate` on an install). The plugin listed an account `default` regardless, so the gateway tried to start it. It now lists an account only when the channel is configured; unconfigured, it stays idle and logs a hint. Checked in the dev gateway: no startup error without config; after restoring the config, `openclaw plugins reload chatwoot` registered the route and started the account without restarting the gateway, and the smoke test passed.
+
+**Error text reaching customers.** The host reports its own failures as ordinary replies. `dispatchInboundDirectDm` strips the `isError` flag before calling `deliver`, so a prefix check on `⚠️` was the only guard, and it missed an error without that prefix (`prepared model runtime publication was superseded ... run "openclaw doctor --fix"`) that reached a customer once. The plugin now also registers a `reply_payload_sending` hook, restricted to `channel === "chatwoot"`, which sees the raw payload. Observed for a model HTTP 500: the hook received `{ text, isError: true }` for the first error and an unflagged `⚠️ OpenClaw couldn't produce or deliver a reply` follow-up. Both are cancelled, the first one is recorded per session, and the handler hands off with it as the reason. The customer sees only the handoff message. Cancelling an error makes the host emit that generic follow-up, which is why the `⚠️` prefix check stays.
+
+Not reproduced: the original `superseded` error appeared after repeated config changes and plugin reloads in quick succession and could not be triggered again (config hot-reload, and reloads right after a restart, both stayed healthy), so it is not confirmed that this exact text carries `isError`. What is verified is the mechanism for a controlled error and the prefix fallback. If a non-prefixed, unflagged error text ever reaches a customer, the next step is to move from `dispatchInboundDirectDm` to the lower-level `ChannelInboundTurnPlan` API and decide from the run outcome instead of the text.
+
 ## Covered only by unit tests
 
-76 tests (`npm test`) cover signature verification, replay window, filtering, dedupe (including persistence across a simulated restart), per-conversation ordering, handoff ordering and failure handling, reply timeout with a late reply, chunking, API retry/backoff, and config validation. These run against fakes.
+92 tests (`npm test`) cover signature verification, replay window, filtering, dedupe (including persistence across a simulated restart), per-conversation ordering, handoff ordering and failure handling, reply timeout with a late reply, chunking, API retry/backoff, and config validation. These run against fakes.
 
 ## Not verified
 
