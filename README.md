@@ -69,6 +69,34 @@ In Chatwoot, create an **Agent Bot** (or an account webhook) with the outgoing U
 - `session.dmScope` must separate customers (`per-channel-peer`, `per-account-channel-peer` or `per-peer`). OpenClaw's default, `main`, puts every direct message in one shared session, so the plugin refuses to start with it (override with `allowSharedSession: true` only if you mean it).
 - The gateway must be reachable from Chatwoot at a **public hostname**. Chatwoot 4.x blocks webhook URLs that resolve to private addresses. Do not work around this in production with `SAFE_FETCH_ALLOW_PRIVATE_NETWORK`.
 
+## Several agents: route Chatwoot to one of them
+
+The plugin hands every conversation to OpenClaw's normal route resolver, so which agent answers is decided by `bindings`, the same as for any other channel. To let only agent `support` handle Chatwoot while your other agents keep their own channels:
+
+```json5
+{
+  agents: {
+    ownership: "explicit",
+    entries: {
+      main: { workspace: "~/.openclaw/workspace" },
+      support: { workspace: "~/.openclaw/workspace-support" }
+    }
+  },
+  bindings: [
+    { agentId: "support", match: { channel: "chatwoot", accountId: "*" } }
+  ]
+}
+```
+
+Notes:
+
+- `accountId` is `default` for this plugin. Omitting it also works, but `"*"` makes the intent explicit. An omitted `accountId` matches only the default account.
+- Without a binding in a multi-agent setup, OpenClaw cannot choose and reports `AGENT_SELECTION_REQUIRED`, so the customer's message will end in a handoff.
+- Check it with `openclaw agents list --bindings`. Sessions then appear as `agent:support:chatwoot:direct:<account>-<conversation>`.
+- Bindings only pick the agent; they are not access control. Tools are the thing to restrict: OpenClaw lets agents read each other's sessions by default (`tools.agentToAgent`, `tools.sessions.visibility`). For a customer-facing agent, narrow or disable that, and give it only the tools it needs.
+- Changing a binding affects new conversations; an existing conversation keeps the session it already has under the old agent.
+- Try it in the dev stack by setting `CHATWOOT_AGENT_ID=support` in `.env` and re-running `scripts/dev-up.sh`.
+
 ## Security
 
 - `webhookSecret` is required. `allowUnsignedWebhooks: true` exists for local development only and logs a warning at startup; anyone who can reach an unsigned webhook can talk to your agent.

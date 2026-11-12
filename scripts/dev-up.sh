@@ -66,7 +66,11 @@ printf '%s' "$LINE" | node -e '
 # 5. OpenClaw
 node scripts/render-openclaw-config.mjs
 echo "-> starting the OpenClaw gateway"
-docker compose --profile gateway up -d --force-recreate openclaw-gateway
+# --no-deps matters: recreating the gateway must not recreate Redis, or Sidekiq exits and
+# Chatwoot's webhook jobs pile up with no worker.
+docker compose --profile gateway up -d mock-llm
+docker compose --profile gateway up -d --force-recreate --no-deps openclaw-gateway
+docker compose up -d chatwoot-sidekiq
 
 echo "-> waiting for the gateway to start the chatwoot channel"
 for i in $(seq 1 60); do

@@ -63,8 +63,29 @@ const mockModel = hasProviderKey
       },
     };
 
+// Optional: answer Chatwoot with one specific agent while other agents keep their own channels.
+// Set CHATWOOT_AGENT_ID in .env to try the multi-agent setup described in the README.
+const agentId = (env.CHATWOOT_AGENT_ID ?? "").trim();
+const multiAgent = agentId
+  ? {
+      agents: {
+        ownership: "explicit",
+        entries: {
+          main: { workspace: "~/.openclaw/workspace" },
+          [agentId]: { workspace: `~/.openclaw/workspace-${agentId}` },
+        },
+      },
+      bindings: [{ agentId, comment: "Chatwoot customer support", match: { channel: "chatwoot", accountId: "*" } }],
+    }
+  : {};
+
+// `agents` can come from both the mock model (defaults) and the multi-agent roster (entries).
+const agents = { ...(mockModel.agents ?? {}), ...(multiAgent.agents ?? {}) };
+
 const config = {
-  ...mockModel,
+  ...(mockModel.models ? { models: mockModel.models } : {}),
+  ...(Object.keys(agents).length > 0 ? { agents } : {}),
+  ...(multiAgent.bindings ? { bindings: multiAgent.bindings } : {}),
   gateway: {
     mode: "local",
     bind: "lan",

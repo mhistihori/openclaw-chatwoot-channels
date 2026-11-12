@@ -17,6 +17,8 @@ A throwaway customer writes through the Chatwoot public API (`scripts/smoke.sh`)
 | No model credentials at all | Same as a model failure: handoff, no internal error text shown to the customer. |
 | Webhook probes | Bad signature, missing signature and a correctly signed but one-hour-old request all get 401. `GET` gets 405. |
 
+**Multi-agent routing** (agents `main` and `support`, binding `{ agentId: "support", match: { channel: "chatwoot", accountId: "*" } }`): conversations created before the binding stayed on `main` (`agent:main:chatwoot:direct:1-4` ... `1-16`), conversations created after it were answered by `support` (`agent:support:chatwoot:direct:1-17`, `1-18`, `1-19`), confirmed with `openclaw sessions --agent <id>`. `openclaw agents list --bindings` shows the rule. Not tried: a binding on a specific `peer`, and a multi-agent config with no Chatwoot binding.
+
 Also confirmed from the live system:
 
 - Chatwoot signs AgentBot webhooks with `X-Chatwoot-Signature` / `X-Chatwoot-Timestamp` and sends `X-Chatwoot-Delivery`, matching what the plugin verifies.
