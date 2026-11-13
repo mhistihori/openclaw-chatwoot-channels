@@ -162,6 +162,22 @@ Notes:
 - Internal OpenClaw failures (for example a missing model credential or a model outage) are never shown to the customer. A `reply_payload_sending` hook, active only for this channel, cancels error replies before delivery, and the conversation is handed to a human with the reason in a private note. Replies that start with `⚠️` are treated the same way.
 - `openclaw.json` holds the Chatwoot token and webhook secret in plaintext unless you use OpenClaw's SecretRefs. Prefer SecretRefs outside local development.
 
+## Publishing to ClawHub
+
+Not published yet. The package is prepared for it (`files` whitelist, `openclaw.compat`, `openclaw.build`). A dry run against the current contents passes with 19 files (62 KB), and a tarball of that exact shape installs in a clean OpenClaw 2026.11.3 container (`plugins install npm-pack:...`).
+
+```bash
+npm i -g clawhub
+clawhub login
+npm run release:check                      # rebuild dist/, typecheck, tests
+git tag v0.2.0 && git push --tags          # after pushing the commit that contains dist/
+clawhub package publish . --dry-run \
+  --source-repo mhistihori/openclaw-chatwoot-channels \
+  --source-commit "$(git rev-parse HEAD)" --source-ref v0.2.0
+```
+
+Run it again without `--dry-run` to publish. New releases stay hidden from normal install surfaces until ClawHub's review and verification finish; add `--wait` to wait for the result. Users then install with `openclaw plugins install clawhub:<package>`.
+
 ## Development
 
 ```bash
@@ -201,4 +217,4 @@ Run live against Chatwoot 4.19.1 and OpenClaw 2026.11.3 with a mock model; see [
 
 ## License
 
-MIT
+MIT. See [LICENSE](LICENSE).

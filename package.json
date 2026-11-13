@@ -8,6 +8,12 @@
   "engines": {
     "node": ">=24.16.0"
   },
+  "files": [
+    "dist",
+    "openclaw.plugin.json",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
@@ -21,6 +27,14 @@
     "runtimeExtensions": ["./dist/index.js"],
     "setupEntry": "./setup-entry.ts",
     "runtimeSetupEntry": "./dist/setup-entry.js",
+    "compat": {
+      "pluginApi": ">=2026.11.3",
+      "minGatewayVersion": "2026.11.3"
+    },
+    "build": {
+      "openclawVersion": "2026.11.3",
+      "pluginSdkVersion": "2026.11.3"
+    },
     "channel": {
       "id": "chatwoot",
       "label": "Chatwoot",
