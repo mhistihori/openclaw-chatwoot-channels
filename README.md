@@ -100,7 +100,7 @@ Then configure `channels.chatwoot` in `openclaw.json`:
       accountId: 1,
       apiToken: "…",            // Chatwoot user or AgentBot access token
       webhookSecret: "…",       // required, see "Security"
-      allowedInboxIds: [3],     // optional; empty means every inbox
+      allowedInboxIds: [3],     // or "3,5", or "${CHATWOOT_ALLOWED_INBOX_IDS}"; empty means every inbox
       respondStatuses: ["pending"],
       includeHumanReplies: true,   // show the bot what human agents wrote (default)
       replyTimeoutMs: 120000,
@@ -124,6 +124,26 @@ In Chatwoot, create an **Agent Bot** (or an account webhook) with the outgoing U
 - OpenClaw 2026.11.3 or newer.
 - `session.dmScope` must separate customers (`per-channel-peer`, `per-account-channel-peer` or `per-peer`). OpenClaw's default, `main`, puts every direct message in one shared session, so the plugin refuses to start with it (override with `allowSharedSession: true` only if you mean it).
 - The gateway must be reachable from Chatwoot at a **public hostname**. Chatwoot 4.x blocks webhook URLs that resolve to private addresses. Do not work around this in production with `SAFE_FETCH_ALLOW_PRIVATE_NETWORK`.
+
+## Settings from the environment
+
+Any string in `openclaw.json` can read an environment variable with OpenClaw's own substitution, so secrets and per-environment values do not have to live in the file:
+
+```json5
+channels: {
+  chatwoot: {
+    baseUrl: "${CHATWOOT_BASE_URL}",
+    accountId: "${CHATWOOT_ACCOUNT_ID}",
+    apiToken: "${CHATWOOT_API_TOKEN}",
+    webhookSecret: "${CHATWOOT_WEBHOOK_SECRET}",
+    allowedInboxIds: "${CHATWOOT_ALLOWED_INBOX_IDS}"   // e.g. 3 or 3,5
+  }
+}
+```
+
+`allowedInboxIds` takes a list (`[3, 5]`) or a comma-separated string (`"3,5"`), so it can come from a variable. The plugin does not read any environment variable on its own; the config file always shows where each value comes from.
+
+OpenClaw leaves a reference to a **missing or empty** variable in place as literal text. For an allowlist the plugin treats that as an error and refuses to start (`allowedInboxIds still contains an environment reference ...`), instead of reading it as "no list" and answering every inbox. If you want an explicit fallback, write `${CHATWOOT_ALLOWED_INBOX_IDS:-3}`. When the list is genuinely empty the plugin starts, but logs a warning that it answers every inbox in the account.
 
 ## Several agents: route Chatwoot to one of them
 

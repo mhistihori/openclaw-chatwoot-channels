@@ -35,6 +35,10 @@ export default defineChannelPluginEntry({
             }
             api.logger.warn("chatwoot: allowSharedSession is on. All customers share one agent session.");
         }
+        if (config.allowedInboxIds.length === 0) {
+            api.logger.warn(`chatwoot: allowedInboxIds is empty, so the bot answers every inbox in account ${config.accountId}. ` +
+                `Set channels.chatwoot.allowedInboxIds to limit it.`);
+        }
         if (config.allowUnsignedWebhooks) {
             api.logger.warn("chatwoot: allowUnsignedWebhooks is on. Anyone who can reach the webhook can talk to your agent. Development only.");
         }

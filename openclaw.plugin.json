@@ -20,7 +20,11 @@
           "webhookSecret": { "type": "string", "description": "Secret used to verify X-Chatwoot-Signature" },
           "allowUnsignedWebhooks": { "type": "boolean", "description": "Development only: accept unsigned webhooks" },
           "webhookPath": { "type": "string", "description": "Gateway path for the webhook (default /chatwoot/webhook)" },
-          "allowedInboxIds": { "type": "array", "items": { "type": ["integer", "string"] } },
+          "allowedInboxIds": {
+            "type": ["array", "string"],
+            "items": { "type": ["integer", "string"] },
+            "description": "Inbox ids to answer: a list, or a comma-separated string such as \"3,5\" or \"${CHATWOOT_ALLOWED_INBOX_IDS}\". Empty means every inbox."
+          },
           "respondStatuses": {
             "type": "array",
             "items": { "type": "string", "enum": ["pending", "open", "resolved", "snoozed"] }

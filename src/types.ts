@@ -12,8 +12,8 @@ export interface ChatwootChannelConfig {
   /** Development only: accept webhooks without a signature. */
   allowUnsignedWebhooks?: boolean;
   webhookPath?: string;
-  /** Only react to these inboxes. Empty or missing means all inboxes. */
-  allowedInboxIds?: Array<number | string>;
+  /** Only react to these inboxes: a list, or a comma-separated string (so it can be `${ENV_VAR}`). Empty or missing means all inboxes. */
+  allowedInboxIds?: Array<number | string> | string;
   /** The bot only answers conversations in these statuses. Default: ["pending"]. */
   respondStatuses?: ChatwootStatus[];
   /** Give up on the agent after this long and hand off to a human. */

@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { ChatwootConfigError, checkSessionIsolation, inspectChatwootConfig, resolveChatwootConfig } from "../src/config.js";
+import { ChatwootConfigError, checkSessionIsolation, inspectChatwootConfig, parseInboxIds, resolveChatwootConfig } from "../src/config.js";
 import { createDedupeStore } from "../src/dedupe.js";
 import { parseTarget } from "../src/target.js";
 
@@ -78,6 +78,49 @@ describe("config", () => {
   it("inspects without throwing or leaking the token", () => {
     expect(inspectChatwootConfig({})).toEqual({ configured: false, tokenStatus: "missing" });
     expect(inspectChatwootConfig(wrap(base))).toEqual({ configured: true, tokenStatus: "available" });
+  });
+});
+
+describe("allowedInboxIds", () => {
+  it.each([
+    [undefined, []],
+    [null, []],
+    [[], []],
+    [[3, 5], [3, 5]],
+    [["3", 5], [3, 5]],
+    ["3", [3]],
+    ["3,5", [3, 5]],
+    [" 3 , 5 ,", [3, 5]],
+    ["", []],
+    ["   ", []],
+  ])("reads %j as %j", (input, expected) => {
+    expect(parseInboxIds(input)).toEqual(expected);
+  });
+
+  it.each(["3,abc", "0", "-2", "3;5", "1.5", [3, "x"], [0]])("rejects %j", (input) => {
+    expect(() => parseInboxIds(input)).toThrow(ChatwootConfigError);
+  });
+
+  it("rejects values that are neither a list nor a string", () => {
+    expect(() => parseInboxIds(3)).toThrow(ChatwootConfigError);
+    expect(() => parseInboxIds({ id: 3 })).toThrow(ChatwootConfigError);
+  });
+
+  // OpenClaw leaves a reference to a missing or empty variable in place as literal text.
+  // Reading that as "no list" would make the bot answer every inbox.
+  it.each(["${CHATWOOT_ALLOWED_INBOX_IDS}", " ${CHATWOOT_ALLOWED_INBOX_IDS} ", "3,${OTHER}", "${A:-}x"])(
+    "fails closed on an unresolved environment reference: %s",
+    (input) => {
+      expect(() => parseInboxIds(input)).toThrow(/environment reference/);
+    },
+  );
+
+  it("is applied when resolving the whole section", () => {
+    const base = { baseUrl: "https://chat.example.com", accountId: 1, apiToken: "t", webhookSecret: "s" };
+    expect(resolveChatwootConfig({ channels: { chatwoot: { ...base, allowedInboxIds: "3,5" } } }).allowedInboxIds).toEqual([3, 5]);
+    expect(() => resolveChatwootConfig({ channels: { chatwoot: { ...base, allowedInboxIds: "${CHATWOOT_ALLOWED_INBOX_IDS}" } } })).toThrow(
+      ChatwootConfigError,
+    );
   });
 });
 

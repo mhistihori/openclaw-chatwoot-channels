@@ -45,6 +45,34 @@ function toPositiveInt(value: unknown, field: string): number {
   return n;
 }
 
+/**
+ * `allowedInboxIds` as written in `openclaw.json`: an array (`[3, 5]`) or a comma-separated
+ * string (`"3,5"`). The string form exists so the list can come from the environment through
+ * OpenClaw's own substitution, `allowedInboxIds: "${CHATWOOT_ALLOWED_INBOX_IDS}"`.
+ *
+ * OpenClaw leaves a reference to a missing or empty variable in place as literal text. For an
+ * allowlist that must stop the plugin: treating it as "no list" would silently answer every inbox.
+ */
+export function parseInboxIds(value: unknown): number[] {
+  if (value === undefined || value === null) return [];
+  if (Array.isArray(value)) return value.map((v) => toPositiveInt(v, "allowedInboxIds[]"));
+  if (typeof value !== "string") {
+    throw new ChatwootConfigError("allowedInboxIds must be a list of inbox ids or a comma-separated string");
+  }
+  if (/\$\{[^}]*\}/.test(value)) {
+    throw new ChatwootConfigError(
+      "allowedInboxIds still contains an environment reference (" +
+        value.trim() +
+        "). The variable is missing or empty in the gateway's environment; set it, or use a fallback like ${NAME:-3}",
+    );
+  }
+  return value
+    .split(",")
+    .map((part) => part.trim())
+    .filter((part) => part !== "")
+    .map((part) => toPositiveInt(part, "allowedInboxIds"));
+}
+
 function readSection(cfg: unknown): ChatwootChannelConfig | undefined {
   const channels = (cfg as { channels?: Record<string, unknown> } | undefined)?.channels;
   const section = channels?.["chatwoot"];
@@ -117,7 +145,7 @@ export function resolveChatwootConfig(cfg: unknown): ResolvedChatwootConfig {
     webhookSecret: s.webhookSecret?.trim() || undefined,
     allowUnsignedWebhooks: allowUnsigned,
     webhookPath: s.webhookPath ?? DEFAULT_WEBHOOK_PATH,
-    allowedInboxIds: (s.allowedInboxIds ?? []).map((v) => toPositiveInt(v, "allowedInboxIds[]")),
+    allowedInboxIds: parseInboxIds(s.allowedInboxIds),
     respondStatuses,
     replyTimeoutMs: s.replyTimeoutMs ?? DEFAULT_REPLY_TIMEOUT_MS,
     replayWindowSeconds: s.replayWindowSeconds ?? DEFAULT_REPLAY_WINDOW_SECONDS,

@@ -60,9 +60,21 @@ A bug found by that last test and fixed: when the configured token belongs to a 
 
 Not verified: a real bot token end to end (the dev stack uses an admin token), human replies carrying attachments (only text is recorded), and a gateway restart with replies pending (covered by unit tests of the store only).
 
+## Inbox allowlist from the environment
+
+`allowedInboxIds` accepts a list or a comma-separated string, so `"${CHATWOOT_ALLOWED_INBOX_IDS}"` works with OpenClaw's own `${VAR}` substitution. Verified live (variable set through `env.vars` in `openclaw.json`):
+
+- variable `1` (this inbox): the bot answers;
+- variable `999` (another inbox): the bot stays silent;
+- variable missing: OpenClaw leaves `${CHATWOOT_ALLOWED_INBOX_IDS}` in place as text, the plugin refuses to start (`channel startup failed: ... still contains an environment reference`), `plugins reload` reports `Plugin operation failed during activate` with the same reason, and the bot answers nothing.
+
+The plugin deliberately does not read `process.env` itself. A fallback like "if the list is empty, look at `CHATWOOT_ALLOWED_INBOX_IDS`" would be a configuration source that does not appear in `openclaw.json`, and a missing or misspelled variable would silently turn into "answer every inbox".
+
+Not tested: a process-level variable set by Docker/Dokploy (as opposed to `env.vars`); the substitution rules are the documented ones, so it should behave the same.
+
 ## Covered only by unit tests
 
-127 tests (`npm test`) cover signature verification, replay window, filtering, dedupe (including persistence across a simulated restart), per-conversation ordering, handoff ordering and failure handling, reply timeout with a late reply, chunking, API retry/backoff, and config validation. These run against fakes.
+150 tests (`npm test`) cover signature verification, replay window, filtering, dedupe (including persistence across a simulated restart), per-conversation ordering, handoff ordering and failure handling, reply timeout with a late reply, chunking, API retry/backoff, and config validation. These run against fakes.
 
 ## Not verified
 
