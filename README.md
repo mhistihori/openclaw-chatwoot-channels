@@ -180,6 +180,7 @@ Notes:
 - Use a dedicated Chatwoot token for the bot, separate from any human's.
 - The raw body is what is signed, so put no body-rewriting proxy between Chatwoot and the gateway.
 - Internal OpenClaw failures (for example a missing model credential or a model outage) are never shown to the customer. A `reply_payload_sending` hook, active only for this channel, cancels error replies before delivery, and the conversation is handed to a human with the reason in a private note. Replies that start with `⚠️` are treated the same way.
+- The message queue is bounded, so a flood cannot exhaust the gateway: at most 5 jobs waiting or running per conversation, 200 in total, 8 agent turns at once, and a job that waited more than 5 minutes is dropped unrun. Over a limit, the message is dropped with a warning in the log (the webhook still answers 200, so Chatwoot does not retry) and the conversation stays visible to human agents. Put your own rate limit in front of the webhook as well. A turn that hits `replyTimeoutMs` hands the conversation to a human, but the host gives the plugin no way to cancel that turn, so it may still run to its end in the background.
 - `openclaw.json` holds the Chatwoot token and webhook secret in plaintext unless you use OpenClaw's SecretRefs. Prefer SecretRefs outside local development.
 
 ## Publishing to ClawHub

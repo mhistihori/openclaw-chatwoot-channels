@@ -1,5 +1,6 @@
 import { chunkText } from "./chatwoot-client.js";
 import { formatWithHumanContext } from "./human-context.js";
+import { QueueExpiredError } from "./queue.js";
 import { classifyWebhook, parseBody, verifySignature } from "./webhook.js";
 function respond(status, action, reason, work) {
     return { status, body: { ok: status < 400, action, ...(reason ? { reason } : {}) }, ...(work ? { work } : {}) };
@@ -51,8 +52,19 @@ export function handleWebhook(req, deps) {
         return respond(200, "duplicate", "delivery");
     if (!deps.dedupe.claim(`msg:${job.accountId}:${job.messageId}`))
         return respond(200, "duplicate", "message");
+    // Bounded backlog: a flood from one customer (or a slow model) must not grow memory without
+    // limit. A dropped message is logged; the customer can simply write again, and a human can
+    // always see the conversation in Chatwoot.
+    const queueKey = `${job.accountId}:${job.conversationId}`;
+    const admit = deps.queue.tryAdmit(queueKey);
+    if (!admit.ok) {
+        log.warn(`chatwoot: dropped message ${job.messageId} for conversation ${job.conversationId} (${admit.reason})`);
+        return respond(200, "dropped", admit.reason);
+    }
     const schedule = deps.schedule ?? ((fn) => fn());
-    const work = schedule(() => deps.queue.run(`${job.accountId}:${job.conversationId}`, () => processJob(job, deps))).catch((e) => log.error(`chatwoot: unhandled error for conversation ${job.conversationId}: ${String(e)}`));
+    const work = schedule(() => deps.queue.run(queueKey, () => processJob(job, deps))).catch((e) => e instanceof QueueExpiredError
+        ? log.warn(`chatwoot: dropped message ${job.messageId} for conversation ${job.conversationId} (${e.message})`)
+        : log.error(`chatwoot: unhandled error for conversation ${job.conversationId}: ${String(e)}`));
     return respond(200, "accepted", undefined, work);
 }
 export function wantsHuman(text, keywords) {

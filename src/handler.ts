@@ -2,7 +2,7 @@ import { chunkText, type ChatwootClient } from "./chatwoot-client.js";
 import type { DedupeStore } from "./dedupe.js";
 import { formatWithHumanContext, type HumanContextStore } from "./human-context.js";
 import type { OwnMessageTracker } from "./own-messages.js";
-import type { KeyedQueue } from "./queue.js";
+import { QueueExpiredError, type KeyedQueue } from "./queue.js";
 import type { InboundJob, Logger, ReplyPayload, ResolvedChatwootConfig } from "./types.js";
 import { classifyWebhook, parseBody, verifySignature } from "./webhook.js";
 
@@ -90,9 +90,21 @@ export function handleWebhook(req: WebhookRequest, deps: HandlerDeps): WebhookRe
   if (delivery && !deps.dedupe.claim(`delivery:${delivery}`)) return respond(200, "duplicate", "delivery");
   if (!deps.dedupe.claim(`msg:${job.accountId}:${job.messageId}`)) return respond(200, "duplicate", "message");
 
+  // Bounded backlog: a flood from one customer (or a slow model) must not grow memory without
+  // limit. A dropped message is logged; the customer can simply write again, and a human can
+  // always see the conversation in Chatwoot.
+  const queueKey = `${job.accountId}:${job.conversationId}`;
+  const admit = deps.queue.tryAdmit(queueKey);
+  if (!admit.ok) {
+    log.warn(`chatwoot: dropped message ${job.messageId} for conversation ${job.conversationId} (${admit.reason})`);
+    return respond(200, "dropped", admit.reason);
+  }
+
   const schedule = deps.schedule ?? ((fn: () => Promise<void>) => fn());
-  const work = schedule(() => deps.queue.run(`${job.accountId}:${job.conversationId}`, () => processJob(job, deps))).catch((e) =>
-    log.error(`chatwoot: unhandled error for conversation ${job.conversationId}: ${String(e)}`),
+  const work = schedule(() => deps.queue.run(queueKey, () => processJob(job, deps))).catch((e) =>
+    e instanceof QueueExpiredError
+      ? log.warn(`chatwoot: dropped message ${job.messageId} for conversation ${job.conversationId} (${e.message})`)
+      : log.error(`chatwoot: unhandled error for conversation ${job.conversationId}: ${String(e)}`),
   );
 
   return respond(200, "accepted", undefined, work);

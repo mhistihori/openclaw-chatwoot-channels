@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { handleWebhook, type RunAgent } from "../src/handler.js";
+import { createKeyedQueue } from "../src/queue.js";
 import { fakeClient, humanPayload, makeConfig, makeDeps, payload, signed, signedRaw } from "./helpers.js";
 
 const ops = (c: ReturnType<typeof fakeClient>) => c.calls.map((x) => x.op);
@@ -21,6 +22,26 @@ describe("handleWebhook", () => {
     expect(res.status).toBe(200);
     expect(res.body.action).toBe("accepted");
     expect(deps.client.calls).toEqual([{ op: "sendMessage", args: [42, "Boleh minta nomor pesanannya?"] }]);
+  });
+
+  it("drops a flood of messages in one conversation instead of queueing without limit", async () => {
+    let release!: () => void;
+    const hold = new Promise<void>((r) => (release = r));
+    const runAgent = vi.fn(async () => hold);
+    const deps = makeDeps(runAgent);
+    deps.queue = createKeyedQueue({ maxPerKey: 2 });
+    const send = (id: number) => handleWebhook(signed(payload({ id })), deps);
+
+    const first = send(1);
+    const second = send(2);
+    const third = send(3);
+    expect([first.body.action, second.body.action]).toEqual(["accepted", "accepted"]);
+    expect(third.status).toBe(200);
+    expect(third.body).toMatchObject({ action: "dropped", reason: "conversation_busy" });
+    expect(third.work).toBeUndefined();
+    release();
+    await Promise.all([first.work, second.work]);
+    expect(runAgent).toHaveBeenCalledTimes(2);
   });
 
   it("rejects a bad signature without running the agent", async () => {
