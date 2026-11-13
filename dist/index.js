@@ -69,9 +69,9 @@ export default defineChannelPluginEntry({
             handler: createWebhookRoute({
                 config,
                 client,
-                dedupe: createDedupeStore(config.stateDir ? { stateDir: config.stateDir } : {}),
+                dedupe: createDedupeStore(config.stateDir ? { stateDir: config.stateDir, onError: (m) => api.logger.warn(`chatwoot: ${m}`) } : {}),
                 queue: createKeyedQueue(),
-                humanContext: createHumanContextStore(config.stateDir ? { stateDir: config.stateDir } : {}),
+                humanContext: createHumanContextStore(config.stateDir ? { stateDir: config.stateDir, onError: (m) => api.logger.warn(`chatwoot: ${m}`) } : {}),
                 ownMessages,
                 runAgent: createRunAgent(api, failures),
                 log: api.logger,

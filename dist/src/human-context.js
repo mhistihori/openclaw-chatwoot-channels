@@ -1,5 +1,6 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { createBoundedLog, DEFAULT_MAX_READ_BYTES, readTailLines, writeLinesAtomic } from "./state-file.js";
 const FILE_NAME = "chatwoot-human-context.jsonl";
 /**
  * What human agents said to a customer since the bot last answered. Replies are remembered
@@ -13,7 +14,8 @@ export function createHumanContextStore(opts = {}) {
     const maxConversations = opts.maxConversations ?? 2000;
     const maxChars = opts.maxCharsPerReply ?? 1500;
     const state = new Map();
-    let file;
+    const maxBytes = opts.maxFileBytes ?? DEFAULT_MAX_READ_BYTES;
+    let log;
     const alive = (e) => e.t >= now() - ttl;
     function apply(line) {
         if (line.op === "add") {
@@ -39,35 +41,45 @@ export function createHumanContextStore(opts = {}) {
         }
     }
     function persist(line) {
-        if (file)
-            appendFileSync(file, `${JSON.stringify(line)}\n`);
+        log?.append(JSON.stringify(line));
     }
+    const snapshot = () => [...state].flatMap(([k, list]) => list.filter(alive).map((e) => JSON.stringify({ op: "add", k, e })));
     if (opts.stateDir) {
-        mkdirSync(opts.stateDir, { recursive: true });
-        file = join(opts.stateDir, FILE_NAME);
-        if (existsSync(file)) {
-            for (const raw of readFileSync(file, "utf8").split("\n")) {
-                if (raw === "")
-                    continue;
-                try {
-                    apply(JSON.parse(raw));
+        try {
+            mkdirSync(opts.stateDir, { recursive: true });
+            const file = join(opts.stateDir, FILE_NAME);
+            if (existsSync(file)) {
+                for (const raw of readTailLines(file, maxBytes)) {
+                    try {
+                        apply(JSON.parse(raw));
+                    }
+                    catch {
+                        // A torn last line after a crash is harmless; skip it.
+                    }
                 }
-                catch {
-                    // A torn last line after a crash is harmless; skip it.
+                for (const [k, list] of state) {
+                    const live = list.filter(alive);
+                    if (live.length > 0)
+                        state.set(k, live);
+                    else
+                        state.delete(k);
                 }
             }
-            // Rewrite compactly so the log does not grow without bound across restarts.
-            for (const [k, list] of state) {
-                const live = list.filter(alive);
-                if (live.length > 0)
-                    state.set(k, live);
-                else
-                    state.delete(k);
-            }
-            const tmp = `${file}.tmp`;
-            const compact = [...state].flatMap(([k, list]) => list.map((e) => JSON.stringify({ op: "add", k, e })));
-            writeFileSync(tmp, compact.length > 0 ? `${compact.join("\n")}\n` : "");
-            renameSync(tmp, file);
+            // Rewrite compactly now, and again whenever the log outgrows what the state needs.
+            const initial = snapshot();
+            writeLinesAtomic(file, initial);
+            log = createBoundedLog({
+                file,
+                maxLines: Math.max(10_000, maxPer * maxConversations),
+                maxBytes,
+                initialLines: initial.length,
+                initialBytes: initial.reduce((n, l) => n + Buffer.byteLength(l) + 1, 0),
+                compact: snapshot,
+                ...(opts.onError ? { onError: opts.onError } : {}),
+            });
+        }
+        catch (e) {
+            opts.onError?.(`could not use human-context log in ${opts.stateDir}: ${String(e)}; continuing from memory only`);
         }
     }
     return {
