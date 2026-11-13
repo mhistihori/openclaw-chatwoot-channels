@@ -198,6 +198,8 @@ clawhub package publish . --dry-run \
 
 Run it again without `--dry-run` to publish. New releases stay hidden from normal install surfaces until ClawHub's review and verification finish; add `--wait` to wait for the result. Users then install with `openclaw plugins install clawhub:<package>`.
 
+The icon is `assets/icon.png` (512×512), drawn by `scripts/make-icon.py` (`python3 scripts/make-icon.py`; needs Pillow). It is original artwork, not the Chatwoot or OpenClaw logo. OpenClaw picks it up from that fixed path with no manifest field. The plugin registers no agent tools, so no `assets/activity.svg` is needed.
+
 ## Development
 
 ```bash

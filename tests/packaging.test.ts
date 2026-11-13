@@ -43,6 +43,22 @@ describe("packaging", () => {
     expect(manifest.channels).toEqual(["chatwoot"]);
   });
 
+  it("ships a square PNG icon at assets/icon.png", () => {
+    const file = join(root, "assets", "icon.png");
+    expect(existsSync(file), "assets/icon.png is missing; run python3 scripts/make-icon.py").toBe(true);
+    const bytes = readFileSync(file);
+    expect(bytes.subarray(0, 8).toString("hex")).toBe("89504e470d0a1a0a"); // PNG signature
+    const width = bytes.readUInt32BE(16);
+    const height = bytes.readUInt32BE(20);
+    expect(width).toBe(height);
+    expect(width).toBeGreaterThanOrEqual(256);
+  });
+
+  it("lists the icon and the build output in the package files", () => {
+    const files = (JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as { files: string[] }).files;
+    expect(files).toEqual(expect.arrayContaining(["assets", "dist", "openclaw.plugin.json", "LICENSE"]));
+  });
+
   it("ships a dist/ that matches the current source", () => {
     execFileSync("npx", ["tsc", "-p", "tsconfig.build.json", "--outDir", tmp], { cwd: root, stdio: "pipe" });
     const fresh = listFiles(tmp);
