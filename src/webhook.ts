@@ -1,5 +1,5 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
-import type { InboundAttachment, InboundJob, ResolvedChatwootConfig } from "./types.js";
+import type { HumanReply, InboundAttachment, InboundJob, ResolvedChatwootConfig } from "./types.js";
 
 export type SignatureResult = { ok: true } | { ok: false; reason: string };
 
@@ -37,6 +37,7 @@ export function verifySignature(p: VerifyParams): SignatureResult {
 
 export type Classification =
   | { kind: "accept"; job: InboundJob }
+  | { kind: "human_reply"; reply: HumanReply }
   | { kind: "ignore"; reason: string };
 
 type Dict = Record<string, unknown>;
@@ -60,6 +61,10 @@ function isIncoming(messageType: unknown): boolean {
   return messageType === "incoming" || messageType === 0;
 }
 
+function isOutgoing(messageType: unknown): boolean {
+  return messageType === "outgoing" || messageType === 1;
+}
+
 function readAttachments(payload: Dict): InboundAttachment[] {
   const raw = payload["attachments"];
   if (!Array.isArray(raw)) return [];
@@ -73,22 +78,32 @@ function readAttachments(payload: Dict): InboundAttachment[] {
 }
 
 /**
- * Decide whether a webhook payload is a customer message the bot should answer.
- * Everything else (agent replies, private notes, other events, wrong status) is
- * ignored so the bot never answers itself or talks over a human.
+ * Decide what a webhook payload is:
+ * - `accept`: a customer message the bot should answer;
+ * - `human_reply`: a message a human agent sent, which is only remembered as context;
+ * - `ignore`: everything else (bot messages, private notes, other events, wrong status),
+ *   so the bot never answers itself or talks over a human.
  */
 export function classifyWebhook(payload: unknown, cfg: ResolvedChatwootConfig): Classification {
   const p = asDict(payload);
   if (!p) return { kind: "ignore", reason: "not_an_object" };
 
   if (p["event"] !== "message_created") return { kind: "ignore", reason: "not_message_created" };
-  if (!isIncoming(p["message_type"])) return { kind: "ignore", reason: "not_incoming" };
+  const incoming = isIncoming(p["message_type"]);
+  const outgoing = isOutgoing(p["message_type"]);
+  if (!incoming && !outgoing) return { kind: "ignore", reason: "not_incoming" };
   if (p["private"] === true) return { kind: "ignore", reason: "private_note" };
 
   const sender = asDict(p["sender"]);
   const senderType = asString(sender?.["type"]);
-  if (senderType !== undefined && senderType !== "contact") {
+  if (incoming && senderType !== undefined && senderType !== "contact") {
     return { kind: "ignore", reason: "sender_not_contact" };
+  }
+  // Outgoing messages matter only when a human agent wrote them. Messages from a bot
+  // (including this one) are already part of the bot's own session.
+  if (outgoing) {
+    if (senderType !== "user") return { kind: "ignore", reason: "not_incoming" };
+    if (!cfg.includeHumanReplies) return { kind: "ignore", reason: "human_replies_disabled" };
   }
 
   const account = asDict(p["account"]);
@@ -106,13 +121,33 @@ export function classifyWebhook(payload: unknown, cfg: ResolvedChatwootConfig): 
     return { kind: "ignore", reason: "inbox_not_allowed" };
   }
 
+  const messageId = asNumber(p["id"]);
+  if (messageId === undefined) return { kind: "ignore", reason: "no_message_id" };
+
+  const createdAt = asNumber(p["created_at"]);
+  const timestampMs = createdAt !== undefined ? createdAt * (createdAt < 1e12 ? 1000 : 1) : Date.now();
+
+  if (outgoing) {
+    // Human replies are recorded whatever the conversation status is: they usually happen while it is `open`.
+    const text = (asString(p["content"]) ?? "").trim();
+    if (text === "") return { kind: "ignore", reason: "empty" };
+    return {
+      kind: "human_reply",
+      reply: {
+        accountId: cfg.accountId,
+        conversationId,
+        messageId,
+        senderName: asString(sender?.["name"]) ?? "Human agent",
+        text,
+        timestampMs,
+      },
+    };
+  }
+
   const status = asString(conversation?.["status"]);
   if (!status || !(cfg.respondStatuses as string[]).includes(status)) {
     return { kind: "ignore", reason: `status_${status ?? "unknown"}` };
   }
-
-  const messageId = asNumber(p["id"]);
-  if (messageId === undefined) return { kind: "ignore", reason: "no_message_id" };
 
   const attachments = readAttachments(p);
   const content = (asString(p["content"]) ?? "").trim();
@@ -120,9 +155,6 @@ export function classifyWebhook(payload: unknown, cfg: ResolvedChatwootConfig): 
 
   const hints = attachments.map((a) => `[Attachment: ${a.type} ${a.url}]`);
   const text = [content, ...hints].filter((s) => s !== "").join("\n");
-
-  const createdAt = asNumber(p["created_at"]);
-  const timestampMs = createdAt !== undefined ? createdAt * (createdAt < 1e12 ? 1000 : 1) : Date.now();
 
   return {
     kind: "accept",

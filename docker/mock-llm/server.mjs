@@ -30,6 +30,12 @@ function lastUserText(messages) {
 
 function answerFor(text) {
   if (text.includes("HANDOFFTEST")) return "Maaf, ini di luar yang bisa saya bantu. [[HANDOFF]]";
+  // Report the human-agent context the plugin put in front of the customer's message, so tests can
+  // see exactly what reached the model.
+  if (text.includes("[Human agent replies")) {
+    const lines = text.split("\n").filter((l) => l.startsWith("- ")).map((l) => l.slice(2));
+    return `Mock agent: konteks agen manusia diterima (${lines.length}): ${lines.join(" | ").slice(0, 300)}`;
+  }
   const q = text.replace(/\s+/g, " ").trim().slice(-120);
   return `Mock agent: terima kasih, pertanyaan Anda sudah kami terima ("${q}").`;
 }

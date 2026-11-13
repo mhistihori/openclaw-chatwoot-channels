@@ -47,9 +47,22 @@ Checked in a clean OpenClaw 2026.11.3 container, installing from a clone-like fo
 
 Not reproduced: the original `superseded` error appeared after repeated config changes and plugin reloads in quick succession and could not be triggered again (config hot-reload, and reloads right after a restart, both stayed healthy), so it is not confirmed that this exact text carries `isError`. What is verified is the mechanism for a controlled error and the prefix fallback. If a non-prefixed, unflagged error text ever reaches a customer, the next step is to move from `dispatchInboundDirectDm` to the lower-level `ChannelInboundTurnPlan` API and decide from the run outcome instead of the text.
 
+## Returning a conversation to the bot, and human replies as context
+
+Verified live (Chatwoot 4.19.1, Agent Bot attached to the inbox):
+
+- Handoff (status `open`), human replies, then **Resolve**: when the customer writes again Chatwoot reopens it as `pending` and the bot answers. Reading the Chatwoot source: with an active bot a reopened conversation becomes `pending`, without one it becomes `open`.
+- Same, using **Mark as pending** instead of Resolve: the next customer message is answered by the bot.
+- With `respondStatuses: ["pending","open"]` the bot answers a customer's follow-up after a handoff (and would talk over a human who took over). With the default it stays silent.
+- Human replies as context: after a handoff, two messages from a human agent, and a switch back to `pending`, the model received exactly those two replies in front of the customer's next message, and none of them on the message after that. A plain exchange with no human involved produced no human context at all.
+
+A bug found by that last test and fixed: when the configured token belongs to a human user, Chatwoot reports the bot's own replies as messages from a human agent, and the first version (filtering by message id) recorded them as "human context". The webhook for a message reaches the gateway before the API response with its id does, so the id was never known in time. The plugin now announces each text before sending it and matches the webhook against that (unit test: a webhook that arrives inside the send call). With a bot token this is not needed, because the sender type already differs.
+
+Not verified: a real bot token end to end (the dev stack uses an admin token), human replies carrying attachments (only text is recorded), and a gateway restart with replies pending (covered by unit tests of the store only).
+
 ## Covered only by unit tests
 
-92 tests (`npm test`) cover signature verification, replay window, filtering, dedupe (including persistence across a simulated restart), per-conversation ordering, handoff ordering and failure handling, reply timeout with a late reply, chunking, API retry/backoff, and config validation. These run against fakes.
+127 tests (`npm test`) cover signature verification, replay window, filtering, dedupe (including persistence across a simulated restart), per-conversation ordering, handoff ordering and failure handling, reply timeout with a late reply, chunking, API retry/backoff, and config validation. These run against fakes.
 
 ## Not verified
 

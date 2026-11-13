@@ -2,6 +2,7 @@ import { createChannelPluginBase, createChatChannelPlugin } from "openclaw/plugi
 import type { ChannelPlugin, OpenClawConfig } from "openclaw/plugin-sdk/channel-core";
 import { chunkText, createChatwootClient } from "./chatwoot-client.js";
 import { inspectChatwootConfig, resolveChatwootConfig } from "./config.js";
+import { ownMessages } from "./own-messages.js";
 import { parseTarget } from "./target.js";
 import type { ResolvedChatwootConfig } from "./types.js";
 
@@ -31,7 +32,10 @@ async function sendText(cfg: OpenClawConfig, to: string, text: string): Promise<
   });
   let lastId: number | undefined;
   for (const part of chunkText(text)) {
-    lastId = (await client.sendMessage(target.conversationId, part)).id ?? lastId;
+    ownMessages.expect(target.conversationId, part);
+    const sent = await client.sendMessage(target.conversationId, part);
+    ownMessages.add(sent.id);
+    lastId = sent.id ?? lastId;
   }
   return { messageId: String(lastId ?? "") };
 }

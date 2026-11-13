@@ -1,6 +1,7 @@
 import { createChannelPluginBase, createChatChannelPlugin } from "openclaw/plugin-sdk/channel-core";
 import { chunkText, createChatwootClient } from "./chatwoot-client.js";
 import { inspectChatwootConfig, resolveChatwootConfig } from "./config.js";
+import { ownMessages } from "./own-messages.js";
 import { parseTarget } from "./target.js";
 export const CHANNEL_ID = "chatwoot";
 function resolveAccount(cfg, accountId) {
@@ -22,7 +23,10 @@ async function sendText(cfg, to, text) {
     });
     let lastId;
     for (const part of chunkText(text)) {
-        lastId = (await client.sendMessage(target.conversationId, part)).id ?? lastId;
+        ownMessages.expect(target.conversationId, part);
+        const sent = await client.sendMessage(target.conversationId, part);
+        ownMessages.add(sent.id);
+        lastId = sent.id ?? lastId;
     }
     return { messageId: String(lastId ?? "") };
 }

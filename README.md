@@ -23,6 +23,31 @@ Customer ──► Chatwoot ──(webhook, signed)──► OpenClaw gateway �
 5. Turns run one at a time per conversation. Each Chatwoot conversation is its own OpenClaw session (`<accountId>-<conversationId>`).
 6. Replies go back through the Chatwoot Messages API with retry and backoff, split to stay under channel limits.
 
+### Giving the conversation back to the bot
+
+The status is the switch: `pending` means the bot answers, `open` means a human does. When the human is done, either:
+
+- press **Resolve**. When the customer writes again, Chatwoot reopens the conversation as `pending` (because the inbox has an active Agent Bot) and the bot answers; or
+- use **Mark as pending** to hand it back right away without resolving.
+
+Both were verified against Chatwoot 4.19.1. This relies on the Agent Bot being attached to the inbox; without it Chatwoot reopens conversations as `open` and the bot stays silent. Do not add `open` to `respondStatuses` to work around that: the bot would then also answer after a handoff and over a human who took over.
+
+### What the bot knows about the human's replies
+
+The plugin ignores messages that humans send when deciding whether to answer, but it remembers them. They are put in front of the customer's next message, so the bot sees what was promised or decided while it was not in charge:
+
+```
+[Human agent replies sent to this customer since your last answer. They were already delivered; do not repeat them, but stay consistent with them.]
+- Winda: Halo, saya Winda. Garansi 1 tahun, klaim lewat nomor pesanan.
+[New message from the customer]
+Berapa lama proses klaimnya?
+```
+
+- It is part of that message, so it also stays in the session history for later turns. The replies are shown once, and only dropped after the bot's turn succeeded (after a failure they stay for the next attempt).
+- Private notes, attachments and the bot's own messages are not included. Up to 20 replies per conversation, 1500 characters each, kept for 7 days. With `stateDir` set they survive a gateway restart; without it they live in memory.
+- Turn it off with `includeHumanReplies: false`.
+- The plugin recognises its own messages by announcing each text before sending it, because Chatwoot's webhook for a message can reach the gateway before the API response that carries the message id. This matters when the configured token belongs to a human user; with a bot token the sender type already tells them apart.
+
 ### Handoff to a human
 
 The conversation is set to `open` (which stops the bot), the customer gets a message, a private note explains why, and a `bot-handoff` label is added. It happens when:
@@ -77,6 +102,7 @@ Then configure `channels.chatwoot` in `openclaw.json`:
       webhookSecret: "…",       // required, see "Security"
       allowedInboxIds: [3],     // optional; empty means every inbox
       respondStatuses: ["pending"],
+      includeHumanReplies: true,   // show the bot what human agents wrote (default)
       replyTimeoutMs: 120000,
       stateDir: "/home/node/.openclaw/chatwoot", // durable dedupe; in-memory when unset
       handoff: {

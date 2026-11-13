@@ -1,5 +1,7 @@
 import { chunkText, type ChatwootClient } from "./chatwoot-client.js";
 import type { DedupeStore } from "./dedupe.js";
+import { formatWithHumanContext, type HumanContextStore } from "./human-context.js";
+import type { OwnMessageTracker } from "./own-messages.js";
 import type { KeyedQueue } from "./queue.js";
 import type { InboundJob, Logger, ReplyPayload, ResolvedChatwootConfig } from "./types.js";
 import { classifyWebhook, parseBody, verifySignature } from "./webhook.js";
@@ -12,6 +14,10 @@ export interface HandlerDeps {
   client: ChatwootClient;
   dedupe: DedupeStore;
   queue: KeyedQueue;
+  /** What human agents said while the bot was not in charge. */
+  humanContext: HumanContextStore;
+  /** Messages this plugin sent itself, so they are never mistaken for a human agent's. */
+  ownMessages: OwnMessageTracker;
   runAgent: RunAgent;
   log: Logger;
   now?: () => number;
@@ -69,8 +75,18 @@ export function handleWebhook(req: WebhookRequest, deps: HandlerDeps): WebhookRe
   const verdict = classifyWebhook(payload, config);
   if (verdict.kind === "ignore") return respond(200, "ignored", verdict.reason);
 
-  const { job } = verdict;
   const delivery = req.headers["x-chatwoot-delivery"];
+
+  if (verdict.kind === "human_reply") {
+    const r = verdict.reply;
+    if (delivery && !deps.dedupe.claim(`delivery:${delivery}`)) return respond(200, "duplicate", "delivery");
+    if (!deps.dedupe.claim(`msg:${r.accountId}:${r.messageId}`)) return respond(200, "duplicate", "message");
+    if (deps.ownMessages.matches(r.conversationId, r.messageId, r.text)) return respond(200, "ignored", "own_message");
+    deps.humanContext.add(`${r.accountId}:${r.conversationId}`, { id: r.messageId, name: r.senderName, text: r.text });
+    return respond(200, "recorded");
+  }
+
+  const { job } = verdict;
   if (delivery && !deps.dedupe.claim(`delivery:${delivery}`)) return respond(200, "duplicate", "delivery");
   if (!deps.dedupe.claim(`msg:${job.accountId}:${job.messageId}`)) return respond(200, "duplicate", "message");
 
@@ -98,7 +114,7 @@ export async function handoff(job: InboundJob, reason: string, deps: HandlerDeps
   await client.setStatus(id, "open");
 
   const steps: Array<[string, () => Promise<unknown>]> = [];
-  if (h.message !== "") steps.push(["message", () => client.sendMessage(id, h.message)]);
+  if (h.message !== "") steps.push(["message", () => sendOwn(deps, id, h.message)]);
   if (h.note !== "") steps.push(["note", () => client.sendMessage(id, h.note.replace("{reason}", reason), { private: true })]);
   if (h.label !== "") steps.push(["label", () => client.addLabels(id, [h.label])]);
 
@@ -121,6 +137,13 @@ async function processJob(job: InboundJob, deps: HandlerDeps): Promise<void> {
     return;
   }
 
+  // What human agents wrote since the bot last answered goes in front of this message, so the
+  // bot knows what was promised or decided while it was not in charge. The keyword check above
+  // used the customer's own words only.
+  const humanKey = `${job.accountId}:${id}`;
+  const humanReplies = deps.humanContext.peek(humanKey);
+  const agentJob: InboundJob = humanReplies.length > 0 ? { ...job, text: formatWithHumanContext(humanReplies, job.text) } : job;
+
   let handedOff = false;
   const marker = config.handoff.marker;
 
@@ -133,7 +156,7 @@ async function processJob(job: InboundJob, deps: HandlerDeps): Promise<void> {
     const media = [...(payload.mediaUrls ?? []), ...(payload.mediaUrl ? [payload.mediaUrl] : [])];
     const body = [text, ...media].filter((s) => s !== "").join("\n");
     if (body !== "") {
-      for (const part of chunkText(body)) await client.sendMessage(id, part);
+      for (const part of chunkText(body)) await sendOwn(deps, id, part);
     }
     if (wantsHandoff) {
       handedOff = true;
@@ -144,11 +167,13 @@ async function processJob(job: InboundJob, deps: HandlerDeps): Promise<void> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     await Promise.race([
-      deps.runAgent(job, deliver),
+      deps.runAgent(agentJob, deliver),
       new Promise<never>((_, reject) => {
         timer = setTimeout(() => reject(new Error(`agent did not finish within ${config.replyTimeoutMs}ms`)), config.replyTimeoutMs);
       }),
     ]);
+    // Only now has the bot seen them. After a failed turn they stay for the next attempt.
+    deps.humanContext.commit(humanKey, humanReplies);
   } catch (e) {
     log.error(`chatwoot: agent failed for conversation ${id}: ${String(e)}`);
     if (!handedOff) {
@@ -158,6 +183,12 @@ async function processJob(job: InboundJob, deps: HandlerDeps): Promise<void> {
   } finally {
     if (timer) clearTimeout(timer);
   }
+}
+
+/** Send a customer-visible message and remember it as the plugin's own, announcing it before it goes out. */
+async function sendOwn(deps: HandlerDeps, conversationId: number, text: string): Promise<void> {
+  deps.ownMessages.expect(conversationId, text);
+  deps.ownMessages.add((await deps.client.sendMessage(conversationId, text)).id);
 }
 
 async function safeHandoff(job: InboundJob, reason: string, deps: HandlerDeps): Promise<void> {

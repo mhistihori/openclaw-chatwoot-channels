@@ -123,6 +123,7 @@ export function resolveChatwootConfig(cfg: unknown): ResolvedChatwootConfig {
     replayWindowSeconds: s.replayWindowSeconds ?? DEFAULT_REPLAY_WINDOW_SECONDS,
     stateDir: s.stateDir,
     allowSharedSession: s.allowSharedSession === true,
+    includeHumanReplies: s.includeHumanReplies !== false,
     handoff: {
       keywords: (s.handoff?.keywords ?? DEFAULT_HANDOFF_KEYWORDS).map((k) => k.toLowerCase()),
       marker,

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { handleWebhook, type RunAgent } from "../src/handler.js";
-import { fakeClient, makeConfig, makeDeps, payload, signed, signedRaw } from "./helpers.js";
+import { fakeClient, humanPayload, makeConfig, makeDeps, payload, signed, signedRaw } from "./helpers.js";
 
 const ops = (c: ReturnType<typeof fakeClient>) => c.calls.map((x) => x.op);
 
@@ -191,5 +191,118 @@ describe("delivery", () => {
   it("sends nothing when the agent stays silent", async () => {
     const { deps } = await run(async () => {});
     expect(deps.client.calls).toEqual([]);
+  });
+});
+
+describe("human replies as context", () => {
+  it("records a human reply without running the agent or sending anything", () => {
+    const runAgent = vi.fn();
+    const deps = makeDeps(runAgent);
+    const res = handleWebhook(signed(humanPayload()), deps);
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ ok: true, action: "recorded" });
+    expect(runAgent).not.toHaveBeenCalled();
+    expect(deps.client.calls).toEqual([]);
+    expect(deps.humanContext.peek("1:42").map((e) => e.text)).toEqual([expect.stringContaining("Garansi 1 tahun")]);
+  });
+
+  it("records a repeated delivery only once", () => {
+    const deps = makeDeps(vi.fn());
+    handleWebhook(signed(humanPayload()), deps);
+    expect(handleWebhook(signed(humanPayload()), deps).body.action).toBe("duplicate");
+    expect(deps.humanContext.peek("1:42")).toHaveLength(1);
+  });
+
+  it("shows the bot what the human said with the customer's next message, then forgets it", async () => {
+    const seen: string[] = [];
+    const runAgent: RunAgent = async (job) => {
+      seen.push(job.text);
+    };
+    const deps = makeDeps(runAgent);
+    handleWebhook(signed(humanPayload({ id: 2001 })), deps);
+    handleWebhook(signed(humanPayload({ id: 2002, content: "Satu hal lagi: biaya kirim klaim gratis." })), deps);
+
+    await handleWebhook(signed(payload({ id: 1, content: "Berapa lama klaimnya?" })), deps).work;
+    await handleWebhook(signed(payload({ id: 2, content: "Terima kasih" })), deps).work;
+
+    expect(seen[0]).toContain("- Winda: Halo, saya Winda. Garansi 1 tahun");
+    expect(seen[0]).toContain("- Winda: Satu hal lagi: biaya kirim klaim gratis.");
+    expect(seen[0]!.endsWith("[New message from the customer]\nBerapa lama klaimnya?")).toBe(true);
+    expect(seen[1]).toBe("Terima kasih"); // already shown once
+  });
+
+  it("keeps the human replies when the bot's turn fails", async () => {
+    let attempt = 0;
+    const seen: string[] = [];
+    const runAgent: RunAgent = async (job) => {
+      seen.push(job.text);
+      if (++attempt === 1) throw new Error("model overloaded");
+    };
+    const deps = makeDeps(runAgent);
+    handleWebhook(signed(humanPayload()), deps);
+
+    await handleWebhook(signed(payload({ id: 1, content: "Pertanyaan pertama" })), deps).work; // fails, hands off
+    await handleWebhook(signed(payload({ id: 2, content: "Pertanyaan kedua" })), deps).work;
+
+    expect(seen[0]).toContain("Winda");
+    expect(seen[1]).toContain("Winda"); // still there for the next attempt
+  });
+
+  it("does not let a human's words trigger the customer-asks-for-a-human handoff", async () => {
+    const runAgent = vi.fn(async () => {});
+    const deps = makeDeps(runAgent);
+    handleWebhook(signed(humanPayload({ content: "Kalau perlu, talk to a human lain ya." })), deps);
+    await handleWebhook(signed(payload({ id: 1, content: "Baik, terima kasih" })), deps).work;
+    expect(runAgent).toHaveBeenCalledOnce();
+    expect(deps.client.calls.some((c) => c.op === "setStatus")).toBe(false);
+  });
+
+  it("never mistakes the bot's own replies for a human agent, even when the webhook beats the API response", async () => {
+    const runAgent: RunAgent = async (_j, deliver) => deliver({ text: "Jawaban bot" });
+    const client = fakeClient();
+    const deps = makeDeps(runAgent, client);
+    // Chatwoot queues the webhook as soon as it stores the message, so it can arrive before the
+    // API call that created the message has returned its id.
+    const realSend = client.sendMessage;
+    let echo: ReturnType<typeof handleWebhook> | undefined;
+    client.sendMessage = async (conversationId, content, opts) => {
+      echo = handleWebhook(signed(humanPayload({ id: 9001, content })), deps);
+      return realSend(conversationId, content, opts);
+    };
+
+    await handleWebhook(signed(payload({ id: 1 })), deps).work;
+
+    expect(echo?.body).toEqual({ ok: true, action: "ignored", reason: "own_message" });
+    expect(deps.humanContext.peek("1:42")).toEqual([]);
+  });
+
+  it("also recognises its handoff message as its own", async () => {
+    const client = fakeClient();
+    const deps = makeDeps(vi.fn(), client);
+    const realSend = client.sendMessage;
+    const echoes: string[] = [];
+    client.sendMessage = async (conversationId, content, opts) => {
+      if (!opts?.private) echoes.push(handleWebhook(signed(humanPayload({ id: 9100 + echoes.length, content })), deps).body.reason ?? "");
+      return realSend(conversationId, content, opts);
+    };
+    await handleWebhook(signed(payload({ id: 1, content: "talk to a human" })), deps).work;
+    expect(echoes).toEqual(["own_message"]);
+    expect(deps.humanContext.peek("1:42")).toEqual([]);
+  });
+
+  it("still records a real human who happens to write the same words later", async () => {
+    const runAgent: RunAgent = async (_j, deliver) => deliver({ text: "Terima kasih" });
+    const deps = makeDeps(runAgent);
+    await handleWebhook(signed(payload({ id: 1 })), deps).work;
+    handleWebhook(signed(humanPayload({ id: 8001, content: "Terima kasih" })), deps); // consumes the bot's announcement
+    handleWebhook(signed(humanPayload({ id: 8002, content: "Terima kasih" })), deps); // a real human this time
+    expect(deps.humanContext.peek("1:42").map((e) => e.id)).toEqual([8002]);
+  });
+
+  it("does nothing when the feature is off", () => {
+    const deps = makeDeps(vi.fn(), fakeClient(), makeConfig({ includeHumanReplies: false }));
+    const res = handleWebhook(signed(humanPayload()), deps);
+    expect(res.body).toEqual({ ok: true, action: "ignored", reason: "human_replies_disabled" });
+    expect(deps.humanContext.peek("1:42")).toEqual([]);
   });
 });

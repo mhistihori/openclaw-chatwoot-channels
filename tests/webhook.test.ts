@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { classifyWebhook, computeSignature, verifySignature } from "../src/webhook.js";
-import { makeConfig, payload } from "./helpers.js";
+import { humanPayload, makeConfig, payload } from "./helpers.js";
 
 describe("verifySignature", () => {
   const body = '{"a":1}';
@@ -91,5 +91,46 @@ describe("classifyWebhook", () => {
   it("ignores garbage", () => {
     expect(classifyWebhook("nope", cfg)).toEqual({ kind: "ignore", reason: "not_an_object" });
     expect(classifyWebhook(null, cfg)).toEqual({ kind: "ignore", reason: "not_an_object" });
+  });
+});
+
+describe("classifyWebhook: human replies", () => {
+  const cfg = makeConfig();
+
+  it("recognises a reply written by a human agent, whatever the conversation status", () => {
+    const r = classifyWebhook(humanPayload(), cfg);
+    expect(r.kind).toBe("human_reply");
+    if (r.kind === "human_reply") {
+      expect(r.reply).toMatchObject({ conversationId: 42, messageId: 2001, senderName: "Winda" });
+      expect(r.reply.text).toContain("Garansi 1 tahun");
+    }
+  });
+
+  it("accepts the numeric message_type used by the REST API", () => {
+    expect(classifyWebhook(humanPayload({ message_type: 1 }), cfg).kind).toBe("human_reply");
+  });
+
+  it.each([
+    ["a bot message", { sender: { id: 3, name: "OpenClaw", type: "agent_bot" } }, "not_incoming"],
+    ["an outgoing message with a contact sender", { sender: { id: 3, type: "contact" } }, "not_incoming"],
+    ["a private note", { private: true }, "private_note"],
+    ["an empty message", { content: "   " }, "empty"],
+    ["another account", { account: { id: 2 } }, "other_account"],
+  ])("does not record %s", (_n, over, reason) => {
+    expect(classifyWebhook(humanPayload(over), cfg)).toEqual({ kind: "ignore", reason });
+  });
+
+  it("respects the inbox allowlist", () => {
+    expect(classifyWebhook(humanPayload(), makeConfig({ allowedInboxIds: [7] }))).toEqual({
+      kind: "ignore",
+      reason: "inbox_not_allowed",
+    });
+  });
+
+  it("can be turned off", () => {
+    expect(classifyWebhook(humanPayload(), makeConfig({ includeHumanReplies: false }))).toEqual({
+      kind: "ignore",
+      reason: "human_replies_disabled",
+    });
   });
 });

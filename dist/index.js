@@ -4,6 +4,8 @@ import { CHANNEL_ID, chatwootPlugin } from "./src/channel.js";
 import { createChatwootClient } from "./src/chatwoot-client.js";
 import { checkSessionIsolation, resolveChatwootConfig } from "./src/config.js";
 import { createDedupeStore } from "./src/dedupe.js";
+import { createHumanContextStore } from "./src/human-context.js";
+import { ownMessages } from "./src/own-messages.js";
 import { createRunAgent } from "./src/dispatch.js";
 import { createFailureTracker, judgeReply } from "./src/failures.js";
 import { createKeyedQueue } from "./src/queue.js";
@@ -65,6 +67,8 @@ export default defineChannelPluginEntry({
                 client,
                 dedupe: createDedupeStore(config.stateDir ? { stateDir: config.stateDir } : {}),
                 queue: createKeyedQueue(),
+                humanContext: createHumanContextStore(config.stateDir ? { stateDir: config.stateDir } : {}),
+                ownMessages,
                 runAgent: createRunAgent(api, failures),
                 log: api.logger,
                 schedule: (work) => runDetachedWebhookWork(work),

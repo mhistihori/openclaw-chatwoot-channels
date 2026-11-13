@@ -28,6 +28,10 @@
           "replyTimeoutMs": { "type": "integer", "minimum": 1000 },
           "replayWindowSeconds": { "type": "integer", "minimum": 1 },
           "stateDir": { "type": "string", "description": "Directory for the durable dedupe log" },
+          "includeHumanReplies": {
+            "type": "boolean",
+            "description": "Show the bot what human agents wrote since its last answer (default true)"
+          },
           "allowSharedSession": {
             "type": "boolean",
             "description": "Allow all customers to share one agent session (not recommended)"

@@ -28,6 +28,11 @@ export interface ChatwootChannelConfig {
    * customers to share one conversation context.
    */
   allowSharedSession?: boolean;
+  /**
+   * Remember what human agents write to a customer and show it to the bot with the customer's
+   * next message, so the bot knows what was said while it was not in charge. Default: true.
+   */
+  includeHumanReplies?: boolean;
   handoff?: {
     /** Customer phrases that skip the agent and go straight to a human. */
     keywords?: string[];
@@ -63,6 +68,7 @@ export interface ResolvedChatwootConfig {
   replayWindowSeconds: number;
   stateDir: string | undefined;
   allowSharedSession: boolean;
+  includeHumanReplies: boolean;
   handoff: ResolvedHandoffConfig;
 }
 
@@ -83,6 +89,16 @@ export interface InboundJob {
   text: string;
   timestampMs: number;
   attachments: InboundAttachment[];
+}
+
+/** A message a human agent sent to the customer. Never answered; only remembered as context. */
+export interface HumanReply {
+  accountId: number;
+  conversationId: number;
+  messageId: number;
+  senderName: string;
+  text: string;
+  timestampMs: number;
 }
 
 /** What an agent reply looks like by the time it reaches `deliver`. */
