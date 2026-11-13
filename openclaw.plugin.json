@@ -36,6 +36,10 @@
             "type": "boolean",
             "description": "Show the bot what human agents wrote since its last answer (default true)"
           },
+          "allowInsecureHttp": {
+            "type": "boolean",
+            "description": "Allow a plain http:// baseUrl on a non-loopback host. Only for a private network you trust."
+          },
           "allowSharedSession": {
             "type": "boolean",
             "description": "Allow all customers to share one agent session (not recommended)"

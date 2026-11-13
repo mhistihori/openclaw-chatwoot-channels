@@ -42,6 +42,10 @@ export default defineChannelPluginEntry({
         if (config.allowUnsignedWebhooks) {
             api.logger.warn("chatwoot: allowUnsignedWebhooks is on. Anyone who can reach the webhook can talk to your agent. Development only.");
         }
+        if (config.insecureHttp) {
+            api.logger.warn(`chatwoot: baseUrl uses plain http (allowInsecureHttp is on). The API token and messages are not encrypted; ` +
+                `keep this on a private network you trust, or switch to https.`);
+        }
         const client = createChatwootClient({
             baseUrl: config.baseUrl,
             accountId: config.accountId,

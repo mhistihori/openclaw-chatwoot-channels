@@ -46,6 +46,9 @@ export function createChatwootClient(opts) {
                     headers: { "content-type": "application/json", api_access_token: opts.apiToken },
                     body: JSON.stringify(body),
                     signal: AbortSignal.timeout(timeoutMs),
+                    // The token is a custom header, which fetch does not strip on a cross-origin redirect,
+                    // so a redirect could hand it to another host. Chatwoot's API does not redirect.
+                    redirect: "error",
                 });
                 if (res.ok) {
                     const text = await res.text();

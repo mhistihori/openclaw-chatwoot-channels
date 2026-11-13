@@ -145,3 +145,40 @@ describe("target", () => {
     expect(parseTarget("abc")).toBeUndefined();
   });
 });
+
+describe("transport security", () => {
+  const wrap = (c: Record<string, unknown>) => ({ channels: { chatwoot: c } });
+  const base = { accountId: 1, apiToken: "t", webhookSecret: "s" };
+
+  it("accepts https", () => {
+    expect(resolveChatwootConfig(wrap({ ...base, baseUrl: "https://chat.example.com" })).insecureHttp).toBe(false);
+  });
+
+  it.each(["http://localhost:3000", "http://127.0.0.1:3000", "http://127.1.2.3", "http://[::1]:3000", "http://chatwoot.localhost"])(
+    "accepts plain http to this machine (%s) without opt-in",
+    (baseUrl) => {
+      expect(resolveChatwootConfig(wrap({ ...base, baseUrl })).insecureHttp).toBe(false);
+    },
+  );
+
+  it.each(["http://chatwoot-rails:3000", "http://10.0.0.5:3000", "http://chat.example.com", "http://127.0.0.1.evil.com"])(
+    "refuses plain http to another host (%s) unless allowInsecureHttp is set",
+    (baseUrl) => {
+      expect(() => resolveChatwootConfig(wrap({ ...base, baseUrl }))).toThrow(/allowInsecureHttp/);
+    },
+  );
+
+  it("accepts plain http to another host with allowInsecureHttp and reports it", () => {
+    const c = resolveChatwootConfig(wrap({ ...base, baseUrl: "http://chatwoot-rails:3000", allowInsecureHttp: true }));
+    expect(c.insecureHttp).toBe(true);
+    expect(c.baseUrl).toBe("http://chatwoot-rails:3000");
+  });
+
+  it("does not treat allowInsecureHttp: true as needed for https", () => {
+    expect(resolveChatwootConfig(wrap({ ...base, baseUrl: "https://chat.example.com", allowInsecureHttp: true })).insecureHttp).toBe(false);
+  });
+
+  it("rejects credentials inside the URL", () => {
+    expect(() => resolveChatwootConfig(wrap({ ...base, baseUrl: "https://user:pw@chat.example.com" }))).toThrow(/credentials/);
+  });
+});

@@ -97,6 +97,7 @@ Then configure `channels.chatwoot` in `openclaw.json`:
   channels: {
     chatwoot: {
       baseUrl: "https://chat.example.com",
+      // allowInsecureHttp: true,  // only for a plain http:// baseUrl on a private network, see below
       accountId: 1,
       apiToken: "…",            // Chatwoot user or AgentBot access token
       webhookSecret: "…",       // required, see "Security"
@@ -118,6 +119,10 @@ Then configure `channels.chatwoot` in `openclaw.json`:
 ```
 
 In Chatwoot, create an **Agent Bot** (or an account webhook) with the outgoing URL `https://<gateway>/chatwoot/webhook`, attach the bot to the inbox so new conversations start as `pending`, and give the bot's agents a way to take over (status `open`).
+
+### Plain http on a private network
+
+The API token is sent in a header on every request, so `baseUrl` should be `https://`. Plain `http://` is accepted without any setting only for this machine (`localhost`, `127.x.x.x`, `::1`). For any other host, for example `http://chatwoot:3000` between two containers, the plugin refuses to start until you set `allowInsecureHttp: true`. That says: the network between the gateway and Chatwoot is private and I trust it. The plugin then logs a warning at every start. Do not use it across the internet, and do not use it for a host you reach through a shared or public network. The plugin never follows redirects on API calls (an `http` to `https` redirect from a proxy is an error, so point `baseUrl` at the final address).
 
 ## Requirements
 
@@ -182,6 +187,7 @@ Notes:
 - Internal OpenClaw failures (for example a missing model credential or a model outage) are never shown to the customer. A `reply_payload_sending` hook, active only for this channel, cancels error replies before delivery, and the conversation is handed to a human with the reason in a private note. Replies that start with `⚠️` are treated the same way.
 - The message queue is bounded, so a flood cannot exhaust the gateway: at most 5 jobs waiting or running per conversation, 200 in total, 8 agent turns at once, and a job that waited more than 5 minutes is dropped unrun. Over a limit, the message is dropped with a warning in the log (the webhook still answers 200, so Chatwoot does not retry) and the conversation stays visible to human agents. Put your own rate limit in front of the webhook as well. A turn that hits `replyTimeoutMs` hands the conversation to a human, but the host gives the plugin no way to cancel that turn, so it may still run to its end in the background.
 - The files under `stateDir` are bounded too. The dedupe log keeps at most 50,000 recent message ids for 24 hours and the human-reply log at most 20 replies per conversation for 7 days; both are rewritten while running once they pass twice that size or 8 MB, and only the last 8 MB is read on start. The backlog check runs before anything is written, so a message that is dropped for flooding writes nothing. If the disk is full or read-only, the plugin logs one warning and keeps working from memory (a restart then forgets which messages it has already seen).
+- The API client refuses plain `http://` to anything but this machine unless you set `allowInsecureHttp: true`, and never follows redirects, so the token cannot be sent unencrypted by accident or handed to another host. Use a dedicated token with only the access the bot needs.
 - `openclaw.json` holds the Chatwoot token and webhook secret in plaintext unless you use OpenClaw's SecretRefs. Prefer SecretRefs outside local development.
 
 ## Publishing to ClawHub

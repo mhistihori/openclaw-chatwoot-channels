@@ -1,4 +1,6 @@
-import { describe, expect, it, vi } from "vitest";
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
+import { afterAll, describe, expect, it, vi } from "vitest";
 import { chunkText, createChatwootClient } from "../src/chatwoot-client.js";
 
 function res(status: number, body: unknown = {}) {
@@ -85,5 +87,39 @@ describe("chunkText", () => {
     const parts = chunkText("x".repeat(25), 10);
     expect(parts.join("")).toBe("x".repeat(25));
     for (const p of parts) expect(p.length).toBeLessThanOrEqual(10);
+  });
+});
+
+describe("redirects", () => {
+  const servers: Server[] = [];
+  afterAll(() => Promise.all(servers.map((s) => new Promise((r) => s.close(r)))));
+
+  const listen = (handler: Parameters<typeof createServer>[1]) =>
+    new Promise<number>((resolve) => {
+      const s = createServer(handler);
+      servers.push(s);
+      s.listen(0, "127.0.0.1", () => resolve((s.address() as AddressInfo).port));
+    });
+
+  it.each([301, 302, 307, 308])("does not follow a %i, so the token never reaches the other host", async (status) => {
+    const seen: Array<string | string[] | undefined> = [];
+    const target = await listen((req, res) => {
+      seen.push(req.headers["api_access_token"]);
+      res.end("{}");
+    });
+    const front = await listen((_req, res) => {
+      res.writeHead(status, { location: `http://127.0.0.1:${target}/stolen` });
+      res.end();
+    });
+    const c = createChatwootClient({
+      baseUrl: `http://127.0.0.1:${front}`,
+      accountId: 1,
+      apiToken: "secret-token",
+      sleep: async () => {},
+      baseDelayMs: 1,
+      maxAttempts: 2,
+    });
+    await expect(c.sendMessage(1, "hi")).rejects.toThrow();
+    expect(seen).toEqual([]);
   });
 });

@@ -91,6 +91,12 @@ export function checkSessionIsolation(cfg: unknown): { isolated: boolean; dmScop
   return { isolated: ISOLATING_DM_SCOPES.includes(scope), dmScope: scope };
 }
 
+/** True for hosts that are this machine: traffic to them never leaves it. */
+export function isLoopbackHost(hostname: string): boolean {
+  const h = hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  return h === "localhost" || h.endsWith(".localhost") || h === "::1" || /^127(?:\.\d{1,3}){3}$/.test(h);
+}
+
 /** Cheap check used by setup and status surfaces. Never throws, never exposes secrets. */
 export function inspectChatwootConfig(cfg: unknown): {
   configured: boolean;
@@ -116,6 +122,18 @@ export function resolveChatwootConfig(cfg: unknown): ResolvedChatwootConfig {
   }
   if (baseUrl.protocol !== "https:" && baseUrl.protocol !== "http:") {
     throw new ChatwootConfigError("baseUrl must be http(s)");
+  }
+  if (baseUrl.username !== "" || baseUrl.password !== "") {
+    throw new ChatwootConfigError("baseUrl must not contain credentials; use apiToken");
+  }
+  // The API token travels in a header on every request, so plain http is only accepted for this
+  // machine, or when the operator has said the network between the two is trusted.
+  const insecureHttp = baseUrl.protocol === "http:" && !isLoopbackHost(baseUrl.hostname);
+  if (insecureHttp && s.allowInsecureHttp !== true) {
+    throw new ChatwootConfigError(
+      `baseUrl uses plain http to ${baseUrl.hostname}, which would send the API token unencrypted. ` +
+        "Use https, or set allowInsecureHttp: true if this is a private network you trust (for example a Docker or VPC network).",
+    );
   }
 
   if (!s.apiToken || s.apiToken.trim() === "") {
@@ -144,6 +162,7 @@ export function resolveChatwootConfig(cfg: unknown): ResolvedChatwootConfig {
     apiToken: s.apiToken.trim(),
     webhookSecret: s.webhookSecret?.trim() || undefined,
     allowUnsignedWebhooks: allowUnsigned,
+    insecureHttp,
     webhookPath: s.webhookPath ?? DEFAULT_WEBHOOK_PATH,
     allowedInboxIds: parseInboxIds(s.allowedInboxIds),
     respondStatuses,

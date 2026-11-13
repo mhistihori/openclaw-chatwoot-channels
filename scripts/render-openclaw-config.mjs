@@ -25,6 +25,7 @@ const port = env.OPENCLAW_PORT || "18789";
 const chatwoot = {
   // The gateway container reaches Chatwoot over the compose network.
   baseUrl: "http://chatwoot-rails:3000",
+  allowInsecureHttp: true, // plain http inside the compose network only
   accountId: seed.account_id,
   apiToken: seed.api_token,
   allowedInboxIds: [seed.inbox_id],

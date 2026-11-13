@@ -5,6 +5,12 @@ export type ChatwootStatus = "pending" | "open" | "resolved" | "snoozed";
 export interface ChatwootChannelConfig {
   baseUrl?: string;
   accountId?: number | string;
+  /**
+   * Plain `http://` is refused unless the host is this machine (localhost, 127.x, ::1). Set true
+   * to allow it on a network you trust, such as a private Docker or VPC network: the API token
+   * and the messages then travel unencrypted.
+   */
+  allowInsecureHttp?: boolean;
   /** Chatwoot user access token or AgentBot access token. */
   apiToken?: string;
   /** Secret used to verify `X-Chatwoot-Signature` (HMAC-SHA256). */
@@ -61,6 +67,8 @@ export interface ResolvedChatwootConfig {
   apiToken: string;
   webhookSecret: string | undefined;
   allowUnsignedWebhooks: boolean;
+  /** True when `baseUrl` is plain http on a non-loopback host that the operator explicitly allowed. */
+  insecureHttp: boolean;
   webhookPath: string;
   allowedInboxIds: number[];
   respondStatuses: ChatwootStatus[];

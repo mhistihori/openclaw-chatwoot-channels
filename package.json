@@ -1,6 +1,6 @@
 {
   "name": "openclaw-chatwoot-channels",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "description": "OpenClaw channel plugin for Chatwoot: two-way customer support conversations with handoff to human agents.",
   "license": "MIT",
   "type": "module",
