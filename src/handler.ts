@@ -2,6 +2,7 @@ import { chunkText, type ChatwootClient } from "./chatwoot-client.js";
 import type { DedupeStore } from "./dedupe.js";
 import { formatWithHumanContext, type HumanContextStore } from "./human-context.js";
 import type { OwnMessageTracker } from "./own-messages.js";
+import type { ActiveTurns } from "./active-turns.js";
 import { mergeJobs, type MessageBatcher } from "./batch.js";
 import { QueueExpiredError, type KeyedQueue } from "./queue.js";
 import type { InboundJob, Logger, ReplyPayload, ResolvedChatwootConfig } from "./types.js";
@@ -17,6 +18,8 @@ export interface HandlerDeps {
   queue: KeyedQueue;
   /** Groups messages that arrive close together into one agent turn. */
   batcher: MessageBatcher;
+  /** Agent turns that are really running, including ones that timed out and cannot be cancelled. */
+  active: ActiveTurns;
   /** What human agents said while the bot was not in charge. */
   humanContext: HumanContextStore;
   /** Messages this plugin sent itself, so they are never mistaken for a human agent's. */
@@ -197,10 +200,40 @@ async function processJob(job: InboundJob, deps: HandlerDeps): Promise<void> {
 
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
+    // The host cannot cancel a turn, so a turn that times out keeps running. It stays counted
+    // until it really settles, and no new turn starts while the limit is reached or this
+    // conversation still has one running.
+    const turn = deps.active.tryBegin(humanKey);
+    if (!turn.ok) {
+      throw new Error(
+        turn.reason === "turn_still_running"
+          ? "a previous agent turn for this conversation is still running"
+          : "too many agent turns are still running",
+      );
+    }
+    let timedOut = false;
+    const dispatch = (async () => deps.runAgent(agentJob, deliver))();
+    dispatch.then(
+      () => {
+        turn.end();
+        if (timedOut) log.info(`chatwoot: the timed-out agent turn for conversation ${id} has now finished (${deps.active.count()} still active)`);
+      },
+      (e: unknown) => {
+        turn.end();
+        if (timedOut) log.info(`chatwoot: the timed-out agent turn for conversation ${id} has now ended with an error: ${String(e)}`);
+      },
+    );
     await Promise.race([
-      deps.runAgent(agentJob, deliver),
+      dispatch,
       new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error(`agent did not finish within ${config.replyTimeoutMs}ms`)), config.replyTimeoutMs);
+        timer = setTimeout(() => {
+          timedOut = true;
+          log.warn(
+            `chatwoot: agent turn for conversation ${id} is still running after ${config.replyTimeoutMs}ms; ` +
+              `it cannot be cancelled and stays counted (${deps.active.count()} active)`,
+          );
+          reject(new Error(`agent did not finish within ${config.replyTimeoutMs}ms`));
+        }, config.replyTimeoutMs);
       }),
     ]);
     // A turn that ends without sending the customer anything (for example the model stopped after

@@ -8,6 +8,7 @@ import { createHumanContextStore } from "./src/human-context.js";
 import { ownMessages } from "./src/own-messages.js";
 import { createRunAgent } from "./src/dispatch.js";
 import { createFailureTracker, judgeReply } from "./src/failures.js";
+import { createActiveTurns } from "./src/active-turns.js";
 import { createMessageBatcher } from "./src/batch.js";
 import { createKeyedQueue } from "./src/queue.js";
 import { createWebhookRoute } from "./src/route.js";
@@ -89,6 +90,7 @@ export default defineChannelPluginEntry({
         client,
         dedupe: createDedupeStore(config.stateDir ? { stateDir: config.stateDir, onError: (m) => api.logger.warn(`chatwoot: ${m}`) } : {}),
         queue: createKeyedQueue(),
+        active: createActiveTurns(),
         batcher: createMessageBatcher({ debounceMs: config.messageDebounceMs }),
         humanContext: createHumanContextStore(config.stateDir ? { stateDir: config.stateDir, onError: (m) => api.logger.warn(`chatwoot: ${m}`) } : {}),
         ownMessages,

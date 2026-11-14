@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { describe, expect, it, vi } from "vitest";
 import { handleWebhook, type RunAgent } from "../src/handler.js";
+import { createActiveTurns } from "../src/active-turns.js";
 import { createMessageBatcher } from "../src/batch.js";
 import { createKeyedQueue } from "../src/queue.js";
 import { fakeClient, humanPayload, makeConfig, makeDeps, payload, signed, signedRaw } from "./helpers.js";
@@ -107,6 +108,67 @@ describe("handleWebhook", () => {
 
     await handleWebhook(signed(payload({ id: 4, content: "D" })), deps).work; // the conversation is not stuck
     expect(seen).toEqual(["A", "D"]);
+  });
+
+  it("keeps a timed-out turn counted until it really stops, and refuses new turns past the limit", async () => {
+    let finishHung!: () => void;
+    const runs: number[] = [];
+    const runAgent: RunAgent = async (job, deliver) => {
+      runs.push(job.conversationId);
+      if (job.conversationId === 42) await new Promise<void>((r) => (finishHung = r)); // never ends on its own
+      await deliver({ text: "ok" });
+    };
+    const deps = makeDeps(runAgent);
+    deps.active = createActiveTurns(1);
+    const other = (id: number, conv: number) => payload({ id, content: "halo", conversation: { id: conv, status: "pending", inbox_id: 5 } });
+
+    // Conversation 42 hangs past replyTimeoutMs: it is handed to a human, but its turn is still running.
+    await handleWebhook(signed(other(1, 42)), deps).work;
+    expect(deps.client.calls.filter((c) => c.op === "setStatus")).toHaveLength(1);
+    expect(deps.active.count()).toBe(1);
+
+    // The limit is reached, so another conversation does not get a turn; it goes to a human instead.
+    deps.client.calls.length = 0;
+    await handleWebhook(signed(other(2, 43)), deps).work;
+    expect(runs).toEqual([42]);
+    expect(JSON.stringify(deps.client.calls)).toContain("too many agent turns are still running");
+
+    // Once the hung turn really ends, capacity is back.
+    finishHung();
+    await new Promise((r) => setTimeout(r, 5));
+    expect(deps.active.count()).toBe(0);
+    deps.client.calls.length = 0;
+    await handleWebhook(signed(other(3, 43)), deps).work;
+    expect(runs).toEqual([42, 43]);
+    expect(deps.client.calls).toEqual([{ op: "sendMessage", args: [43, "ok"] }]);
+  });
+
+  it("does not start a second turn in a conversation whose earlier turn is still running", async () => {
+    let finishHung!: () => void;
+    let calls = 0;
+    const runAgent: RunAgent = async (_job, deliver) => {
+      if (++calls === 1) await new Promise<void>((r) => (finishHung = r));
+      await deliver({ text: "ok" });
+    };
+    const deps = makeDeps(runAgent);
+    await handleWebhook(signed(payload({ id: 1 })), deps).work; // times out, handed off
+    deps.client.calls.length = 0;
+    await handleWebhook(signed(payload({ id: 2 })), deps).work; // same conversation, zombie still running
+    expect(calls).toBe(1);
+    expect(JSON.stringify(deps.client.calls)).toContain("still running");
+    finishHung();
+  });
+
+  it("never lets a late reply from a timed-out turn reach the customer", async () => {
+    let late!: () => Promise<void>;
+    const runAgent: RunAgent = async (_job, deliver) => {
+      await new Promise<void>((r) => (late = async () => { await deliver({ text: "terlambat" }); r(); }));
+    };
+    const deps = makeDeps(runAgent);
+    await handleWebhook(signed(payload({ id: 1 })), deps).work; // times out
+    deps.client.calls.length = 0;
+    await late();
+    expect(deps.client.calls).toEqual([]);
   });
 
   it("answers a message that comes after the quiet window separately", async () => {

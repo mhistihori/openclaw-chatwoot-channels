@@ -146,10 +146,35 @@ async function processJob(job, deps) {
     };
     let timer;
     try {
+        // The host cannot cancel a turn, so a turn that times out keeps running. It stays counted
+        // until it really settles, and no new turn starts while the limit is reached or this
+        // conversation still has one running.
+        const turn = deps.active.tryBegin(humanKey);
+        if (!turn.ok) {
+            throw new Error(turn.reason === "turn_still_running"
+                ? "a previous agent turn for this conversation is still running"
+                : "too many agent turns are still running");
+        }
+        let timedOut = false;
+        const dispatch = (async () => deps.runAgent(agentJob, deliver))();
+        dispatch.then(() => {
+            turn.end();
+            if (timedOut)
+                log.info(`chatwoot: the timed-out agent turn for conversation ${id} has now finished (${deps.active.count()} still active)`);
+        }, (e) => {
+            turn.end();
+            if (timedOut)
+                log.info(`chatwoot: the timed-out agent turn for conversation ${id} has now ended with an error: ${String(e)}`);
+        });
         await Promise.race([
-            deps.runAgent(agentJob, deliver),
+            dispatch,
             new Promise((_, reject) => {
-                timer = setTimeout(() => reject(new Error(`agent did not finish within ${config.replyTimeoutMs}ms`)), config.replyTimeoutMs);
+                timer = setTimeout(() => {
+                    timedOut = true;
+                    log.warn(`chatwoot: agent turn for conversation ${id} is still running after ${config.replyTimeoutMs}ms; ` +
+                        `it cannot be cancelled and stays counted (${deps.active.count()} active)`);
+                    reject(new Error(`agent did not finish within ${config.replyTimeoutMs}ms`));
+                }, config.replyTimeoutMs);
             }),
         ]);
         // A turn that ends without sending the customer anything (for example the model stopped after
