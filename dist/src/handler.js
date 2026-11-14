@@ -68,9 +68,16 @@ export function handleWebhook(req, deps) {
     // work that was started under `runDetachedWebhookWork`, and the batch's timer, and so the turn
     // that follows it, inherit that context from where it is created.
     const schedule = deps.schedule ?? ((fn) => fn());
-    const work = schedule(() => deps.batcher.add(job, queueKey, (take) => deps.queue.run(queueKey, () => processJob(mergeJobs(take()), deps)))).catch((e) => e instanceof QueueExpiredError
-        ? log.warn(`chatwoot: dropped message ${job.messageId} for conversation ${job.conversationId} (${e.message})`)
-        : log.error(`chatwoot: unhandled error for conversation ${job.conversationId}: ${String(e)}`));
+    const work = schedule(() => deps.batcher.add(job, queueKey, (take) => deps.queue.run(queueKey, () => processJob(mergeJobs(take()), deps)).catch(async (e) => {
+        if (!(e instanceof QueueExpiredError))
+            throw e;
+        // The turn waited too long and never started, so nobody has answered these messages.
+        // Leaving the customer in silence is worse than a human taking over; do it once for the
+        // whole batch. `take` also clears the batch so the conversation is not blocked.
+        const expired = mergeJobs(take());
+        log.warn(`chatwoot: handing conversation ${expired.conversationId} to a human (${e.message})`);
+        await safeHandoff(expired, "bot was too busy to answer in time", deps);
+    }))).catch((e) => log.error(`chatwoot: unhandled error for conversation ${job.conversationId}: ${String(e)}`));
     return respond(200, "accepted", undefined, work);
 }
 export function wantsHuman(text, keywords) {

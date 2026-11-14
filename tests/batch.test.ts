@@ -131,4 +131,52 @@ describe("message batcher", () => {
     const p = b.add(job(1, "a"), "k", () => Promise.reject(new Error("boom")));
     await expect(p).rejects.toThrow("boom");
   });
+
+  it("leaves no batch behind when its turn is rejected before it starts, so later messages still run", async () => {
+    const b = createMessageBatcher({ debounceMs: 0 });
+    const expired = b.add(job(1, "a"), "k", () => Promise.reject(new Error("expired in queue"))); // never calls take
+    await expect(expired).rejects.toThrow("expired in queue");
+    expect(b.size()).toBe(0);
+    expect(b.check("k", ok)).toEqual({ ok: true });
+
+    const taken: string[][] = [];
+    await b.add(job(2, "b"), "k", (take) => {
+      taken.push(take().map((j) => j.text));
+      return Promise.resolve();
+    });
+    expect(taken).toEqual([["b"]]);
+  });
+
+  it("gets back capacity when several turns expire", async () => {
+    const b = createMessageBatcher({ debounceMs: 0, maxBatches: 2 });
+    const fail = () => Promise.reject(new Error("expired"));
+    await Promise.allSettled([b.add(job(1, "a"), "x", fail), b.add(job(2, "b"), "y", fail)]);
+    expect(b.size()).toBe(0);
+    expect(b.check("z", ok)).toEqual({ ok: true });
+  });
+
+  it("clears the batch when starting the turn throws", async () => {
+    const b = createMessageBatcher({ debounceMs: 0 });
+    await expect(
+      b.add(job(1, "a"), "k", () => {
+        throw new Error("sync boom");
+      }),
+    ).rejects.toThrow("sync boom");
+    expect(b.size()).toBe(0);
+  });
+
+  it("does not remove a newer batch when an older turn fails after it took its messages", async () => {
+    const b = createMessageBatcher({ debounceMs: 0 });
+    let failOld!: (e: Error) => void;
+    const old = b.add(job(1, "old"), "k", (take) => {
+      take(); // the old turn starts, which frees the key for a newer batch
+      return new Promise<void>((_, rej) => (failOld = rej));
+    });
+    const newer = b.add(job(2, "new"), "k", () => new Promise<void>(() => {})); // queued behind it, still open
+    expect(b.size()).toBe(1);
+    failOld(new Error("old turn failed"));
+    await expect(old).rejects.toThrow("old turn failed");
+    expect(b.size()).toBe(1); // the newer batch survived
+    void newer;
+  });
 });

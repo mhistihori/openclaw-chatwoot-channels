@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { describe, expect, it, vi } from "vitest";
 import { handleWebhook, type RunAgent } from "../src/handler.js";
 import { createMessageBatcher } from "../src/batch.js";
+import { createKeyedQueue } from "../src/queue.js";
 import { fakeClient, humanPayload, makeConfig, makeDeps, payload, signed, signedRaw } from "./helpers.js";
 
 const ops = (c: ReturnType<typeof fakeClient>) => c.calls.map((x) => x.op);
@@ -81,6 +82,31 @@ describe("handleWebhook", () => {
     const b = handleWebhook(signed(payload({ id: 2, content: "B" })), deps);
     await Promise.all([a.work, b.work]);
     expect(contexts).toEqual([true]);
+  });
+
+  it("hands the conversation to a human once when a queued turn expires, and keeps answering later messages", async () => {
+    const seen: string[] = [];
+    const runAgent: RunAgent = async (job, deliver) => {
+      seen.push(job.text);
+      if (seen.length === 1) await new Promise((r) => setTimeout(r, 90));
+      await deliver({ text: "ok" });
+    };
+    const deps = makeDeps(runAgent);
+    deps.queue = createKeyedQueue({ maxWaitMs: 30 });
+    deps.batcher = createMessageBatcher({ debounceMs: 0 });
+    const a = handleWebhook(signed(payload({ id: 1, content: "A" })), deps);
+    await new Promise((r) => setTimeout(r, 10)); // turn 1 is running
+    const b = handleWebhook(signed(payload({ id: 2, content: "B" })), deps);
+    const c = handleWebhook(signed(payload({ id: 3, content: "C" })), deps); // joins B's batch
+    await Promise.all([a.work, b.work, c.work]);
+
+    expect(seen).toEqual(["A"]); // B and C waited too long and never reached the agent
+    expect(deps.client.calls.filter((x) => x.op === "setStatus")).toHaveLength(1);
+    expect(JSON.stringify(deps.client.calls)).toContain("too busy");
+    expect(deps.batcher.size()).toBe(0);
+
+    await handleWebhook(signed(payload({ id: 4, content: "D" })), deps).work; // the conversation is not stuck
+    expect(seen).toEqual(["A", "D"]);
   });
 
   it("answers a message that comes after the quiet window separately", async () => {

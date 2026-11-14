@@ -67,12 +67,32 @@ export function createMessageBatcher(overrides = {}, now = Date.now) {
                 fire: () => {
                     batch.queued = true;
                     batch.timer = undefined;
-                    const take = () => {
+                    // Whatever happens to the turn, this batch must leave the map: a turn that is rejected
+                    // before it starts (it waited too long in the queue) never calls `take`, and a batch
+                    // left behind would swallow every later message for the conversation. Only remove it
+                    // if it is still the open one; a newer batch for the same key is not ours to touch.
+                    const release = () => {
                         if (open.get(key) === batch)
                             open.delete(key);
+                    };
+                    const take = () => {
+                        release();
                         return batch.jobs;
                     };
-                    start(take).then(resolve, reject);
+                    let started;
+                    try {
+                        started = start(take);
+                    }
+                    catch (e) {
+                        started = Promise.reject(e);
+                    }
+                    started.then(() => {
+                        release();
+                        resolve();
+                    }, (e) => {
+                        release();
+                        reject(e);
+                    });
                 },
             };
             open.set(key, batch);
