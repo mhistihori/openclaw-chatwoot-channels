@@ -29,12 +29,29 @@ export function createFailureTracker() {
 export type FailureTracker = ReturnType<typeof createFailureTracker>;
 
 /**
- * OpenClaw renders some failures as "⚠️ <explanation>" without any flag we can see. An agent
- * that starts a customer-facing answer with ⚠️ is treated the same way: that errs towards a
- * human taking over, which is the safe side.
+ * Sentences the OpenClaw runtime sends as an ordinary reply, with no flag, when a turn produced
+ * no answer. They are plumbing, never something to show a customer. These come from the
+ * runtime itself (OpenClaw 2026.11.3, `SETTLED_TOOL_FINALIZATION_FALLBACK_TEXT` and
+ * `GATEWAY_ASSISTANT_ERROR_FALLBACK_TEXT`); the lower-case fragments below are matched anywhere
+ * in the text. If a later version words them differently the empty-turn rule in the handler
+ * (a turn that sent nothing is handed to a human) still catches the result.
+ */
+const HOST_NOTICE_FRAGMENTS = [
+  "no final summary was produced",
+  "i did not repeat any completed actions",
+  "the agent run failed before producing a reply",
+];
+
+/**
+ * OpenClaw renders some failures as "⚠️ <explanation>" without any flag we can see, and some as
+ * a plain sentence (see above). An agent answer that starts with ⚠️ or contains one of those
+ * sentences is treated as a failed turn: that errs towards a human taking over, which is the safe side.
  */
 export function looksLikeHostNotice(text: string | undefined): boolean {
-  return typeof text === "string" && /^\s*⚠️/u.test(text);
+  if (typeof text !== "string") return false;
+  if (/^\s*⚠️/u.test(text)) return true;
+  const lower = text.toLowerCase();
+  return HOST_NOTICE_FRAGMENTS.some((f) => lower.includes(f));
 }
 
 export interface ReplyPayloadFlags {

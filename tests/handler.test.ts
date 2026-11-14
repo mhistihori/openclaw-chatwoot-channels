@@ -209,9 +209,31 @@ describe("delivery", () => {
     expect(deps.client.calls[0]?.args[1]).toBe("Ini fotonya\nhttps://x/a.png");
   });
 
-  it("sends nothing when the agent stays silent", async () => {
+  it("hands the conversation to a human when the agent finishes without sending anything", async () => {
     const { deps } = await run(async () => {});
-    expect(deps.client.calls).toEqual([]);
+    expect(ops(deps.client)[0]).toBe("setStatus");
+    expect(deps.client.calls.find((c) => c.op === "setStatus")?.args).toEqual([42, "open"]);
+    expect(JSON.stringify(deps.client.calls)).toContain("agent produced no reply");
+  });
+
+  it("counts a media-only reply as an answer", async () => {
+    const { deps } = await run(async (_j, deliver) => deliver({ mediaUrl: "https://example.com/a.png" }));
+    expect(deps.client.calls.some((c) => c.op === "setStatus")).toBe(false);
+    expect(deps.client.calls).toEqual([{ op: "sendMessage", args: [42, "https://example.com/a.png"] }]);
+  });
+
+  it("keeps the human replies for the next turn after an empty turn", async () => {
+    const seen: string[] = [];
+    let attempt = 0;
+    const runAgent: RunAgent = async (job, deliver) => {
+      seen.push(job.text);
+      if (++attempt === 2) await deliver({ text: "ok" });
+    };
+    const deps = makeDeps(runAgent);
+    handleWebhook(signed(humanPayload()), deps);
+    await handleWebhook(signed(payload({ id: 1, content: "Pertama" })), deps).work; // empty, handed off
+    await handleWebhook(signed(payload({ id: 2, content: "Kedua" })), deps).work;
+    expect(seen[1]).toContain("- Winda:");
   });
 });
 
@@ -236,8 +258,9 @@ describe("human replies as context", () => {
 
   it("shows the bot what the human said with the customer's next message, then forgets it", async () => {
     const seen: string[] = [];
-    const runAgent: RunAgent = async (job) => {
+    const runAgent: RunAgent = async (job, deliver) => {
       seen.push(job.text);
+      await deliver({ text: "ok" });
     };
     const deps = makeDeps(runAgent);
     handleWebhook(signed(humanPayload({ id: 2001 })), deps);
@@ -270,7 +293,7 @@ describe("human replies as context", () => {
   });
 
   it("does not let a human's words trigger the customer-asks-for-a-human handoff", async () => {
-    const runAgent = vi.fn(async () => {});
+    const runAgent = vi.fn(async (_job: unknown, deliver: (p: { text: string }) => Promise<void>) => deliver({ text: "ok" }));
     const deps = makeDeps(runAgent);
     handleWebhook(signed(humanPayload({ content: "Kalau perlu, talk to a human lain ya." })), deps);
     await handleWebhook(signed(payload({ id: 1, content: "Baik, terima kasih" })), deps).work;

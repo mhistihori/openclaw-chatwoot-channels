@@ -110,6 +110,7 @@ async function processJob(job, deps) {
     const humanReplies = deps.humanContext.peek(humanKey);
     const agentJob = humanReplies.length > 0 ? { ...job, text: formatWithHumanContext(humanReplies, job.text) } : job;
     let handedOff = false;
+    let replied = false; // something customer-visible went out during this turn
     const marker = config.handoff.marker;
     const deliver = async (payload) => {
         if (handedOff)
@@ -123,6 +124,7 @@ async function processJob(job, deps) {
         if (body !== "") {
             for (const part of chunkText(body))
                 await sendOwn(deps, id, part);
+            replied = true;
         }
         if (wantsHandoff) {
             handedOff = true;
@@ -137,6 +139,11 @@ async function processJob(job, deps) {
                 timer = setTimeout(() => reject(new Error(`agent did not finish within ${config.replyTimeoutMs}ms`)), config.replyTimeoutMs);
             }),
         ]);
+        // A turn that ends without sending the customer anything (for example the model stopped after
+        // its tool calls, or the runtime's own "no answer" notice was withheld) would leave the
+        // customer waiting in silence. Hand it to a human instead.
+        if (!replied && !handedOff)
+            throw new Error("agent produced no reply");
         // Only now has the bot seen them. After a failed turn they stay for the next attempt.
         deps.humanContext.commit(humanKey, humanReplies);
     }

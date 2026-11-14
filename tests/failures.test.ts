@@ -9,6 +9,16 @@ describe("looksLikeHostNotice", () => {
     expect(looksLikeHostNotice(text)).toBe(true);
   });
 
+  it.each([
+    "The tool run finished, but no final summary was produced. I did not repeat any completed actions.",
+    "  the TOOL RUN finished, but NO FINAL SUMMARY WAS PRODUCED.",
+    "The agent run failed before producing a reply.",
+    "Maaf. I did not repeat any completed actions.",
+  ])("flags the runtime's plain-sentence fallback: %s", (text) => {
+    expect(looksLikeHostNotice(text)).toBe(true);
+    expect(judgeReply({ text })).toBe("fail");
+  });
+
   it.each(["Halo, ada yang bisa saya bantu?", "Pesanan Anda ⚠️ sedang dikirim", "", undefined])("lets %s through", (text) => {
     expect(looksLikeHostNotice(text)).toBe(false);
   });
