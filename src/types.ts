@@ -22,6 +22,11 @@ export interface ChatwootChannelConfig {
   allowedInboxIds?: Array<number | string> | string;
   /** The bot only answers conversations in these statuses. Default: ["pending"]. */
   respondStatuses?: ChatwootStatus[];
+  /**
+   * Wait this long after a customer's last message before answering, so messages sent in quick
+   * succession get one answer. Default 3000; 0 answers every message separately.
+   */
+  messageDebounceMs?: number;
   /** Give up on the agent after this long and hand off to a human. */
   replyTimeoutMs?: number;
   /** Reject webhooks whose timestamp is older than this. */
@@ -73,6 +78,7 @@ export interface ResolvedChatwootConfig {
   allowedInboxIds: number[];
   respondStatuses: ChatwootStatus[];
   replyTimeoutMs: number;
+  messageDebounceMs: number;
   replayWindowSeconds: number;
   stateDir: string | undefined;
   allowSharedSession: boolean;

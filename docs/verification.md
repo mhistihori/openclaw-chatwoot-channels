@@ -90,4 +90,6 @@ Not tested: a process-level variable set by Docker/Dokploy (as opposed to `env.v
 
 - The `⚠️` heuristic can send a legitimate reply that starts with that emoji to a human. That errs on the safe side. A more precise fix is to move from `dispatchInboundDirectDm` to the lower-level `ChannelInboundTurnPlan` API, which hands over the raw payload with its flags.
 - Secrets in `openclaw.json` are plaintext; the gateway warns about this. Use OpenClaw's SecretRefs outside local development.
-- Bursts of customer messages are processed one turn at a time, not merged into one.
+- Messages sent in quick succession are merged into one turn (`messageDebounceMs`, default 3 s), so every reply starts up to that long after the customer's last message. Verified live: two messages one second apart reached the agent as one message (`first\nsecond`) and got one reply. A customer who pauses longer than the window between two thoughts still gets two answers.
+- The gateway only allows agent work started under `runDetachedWebhookWork`. The batching timer is created inside that call for this reason; creating it earlier made the delayed turn fail with `GatewayDrainingError` (found live, covered by a unit test that models the context).
+- A gateway restart inside the debounce window loses the messages still being collected; they stay visible in Chatwoot and the customer can write again.

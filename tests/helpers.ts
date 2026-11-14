@@ -5,6 +5,7 @@ import { createDedupeStore } from "../src/dedupe.js";
 import { createHumanContextStore } from "../src/human-context.js";
 import { createOwnMessageTracker } from "../src/own-messages.js";
 import type { HandlerDeps, RunAgent } from "../src/handler.js";
+import { createMessageBatcher } from "../src/batch.js";
 import { createKeyedQueue } from "../src/queue.js";
 import type { ResolvedChatwootConfig } from "../src/types.js";
 import { computeSignature } from "../src/webhook.js";
@@ -20,6 +21,7 @@ export function makeConfig(over: Record<string, unknown> = {}): ResolvedChatwoot
         apiToken: "tok",
         webhookSecret: SECRET,
         replyTimeoutMs: 200,
+        messageDebounceMs: 0,
         ...over,
       },
     },
@@ -98,6 +100,7 @@ export function makeDeps(runAgent: RunAgent, client = fakeClient(), config = mak
     client,
     dedupe: createDedupeStore(),
     queue: createKeyedQueue(),
+    batcher: createMessageBatcher({ debounceMs: config.messageDebounceMs }),
     humanContext: createHumanContextStore(),
     ownMessages: createOwnMessageTracker(),
     runAgent,

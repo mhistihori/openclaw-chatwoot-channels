@@ -1,6 +1,7 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { describe, expect, it, vi } from "vitest";
 import { handleWebhook, type RunAgent } from "../src/handler.js";
-import { createKeyedQueue } from "../src/queue.js";
+import { createMessageBatcher } from "../src/batch.js";
 import { fakeClient, humanPayload, makeConfig, makeDeps, payload, signed, signedRaw } from "./helpers.js";
 
 const ops = (c: ReturnType<typeof fakeClient>) => c.calls.map((x) => x.op);
@@ -24,12 +25,15 @@ describe("handleWebhook", () => {
     expect(deps.client.calls).toEqual([{ op: "sendMessage", args: [42, "Boleh minta nomor pesanannya?"] }]);
   });
 
-  it("drops a flood of messages in one conversation instead of queueing without limit", async () => {
+  it("drops messages beyond the batch size instead of collecting without limit", async () => {
     let release!: () => void;
     const hold = new Promise<void>((r) => (release = r));
-    const runAgent = vi.fn(async () => hold);
+    const runAgent = vi.fn(async (_job: unknown, deliver: (p: { text: string }) => Promise<void>) => {
+      await hold;
+      await deliver({ text: "ok" });
+    });
     const deps = makeDeps(runAgent);
-    deps.queue = createKeyedQueue({ maxPerKey: 2 });
+    deps.batcher = createMessageBatcher({ debounceMs: 0, maxMessages: 2 });
     const send = (id: number) => handleWebhook(signed(payload({ id })), deps);
 
     const first = send(1);
@@ -41,7 +45,73 @@ describe("handleWebhook", () => {
     expect(third.work).toBeUndefined();
     release();
     await Promise.all([first.work, second.work]);
-    expect(runAgent).toHaveBeenCalledTimes(2);
+    expect(runAgent).toHaveBeenCalledTimes(1); // the two accepted messages were one turn
+  });
+
+  it("answers messages sent in quick succession once, with all of them as one turn", async () => {
+    const seen: string[] = [];
+    const runAgent: RunAgent = async (job, deliver) => {
+      seen.push(job.text);
+      await deliver({ text: "Satu jawaban" });
+    };
+    const deps = makeDeps(runAgent);
+    deps.batcher = createMessageBatcher({ debounceMs: 40 });
+    const a = handleWebhook(signed(payload({ id: 1, content: "Kalau kirim ke Rembang 59252" })), deps);
+    await new Promise((r) => setTimeout(r, 10));
+    const b = handleWebhook(signed(payload({ id: 2, content: "Berapa ongkirnya" })), deps);
+    await Promise.all([a.work, b.work]);
+    expect(seen).toEqual(["Kalau kirim ke Rembang 59252\nBerapa ongkirnya"]);
+    expect(deps.client.calls).toEqual([{ op: "sendMessage", args: [42, "Satu jawaban"] }]);
+  });
+
+  it("runs the delayed turn inside the context the gateway admitted (runDetachedWebhookWork)", async () => {
+    // The gateway rejects agent work that is not started under `runDetachedWebhookWork`
+    // (GatewayDrainingError). Model that with an async-local context set only by `schedule`.
+    const admitted = new AsyncLocalStorage<boolean>();
+    const contexts: Array<boolean | undefined> = [];
+    const runAgent: RunAgent = async (_job, deliver) => {
+      contexts.push(admitted.getStore());
+      await deliver({ text: "ok" });
+    };
+    const deps = makeDeps(runAgent);
+    deps.batcher = createMessageBatcher({ debounceMs: 20 });
+    deps.schedule = (work) => admitted.run(true, work);
+    const a = handleWebhook(signed(payload({ id: 1, content: "A" })), deps);
+    await new Promise((r) => setTimeout(r, 5));
+    const b = handleWebhook(signed(payload({ id: 2, content: "B" })), deps);
+    await Promise.all([a.work, b.work]);
+    expect(contexts).toEqual([true]);
+  });
+
+  it("answers a message that comes after the quiet window separately", async () => {
+    const seen: string[] = [];
+    const runAgent: RunAgent = async (job, deliver) => {
+      seen.push(job.text);
+      await deliver({ text: "ok" });
+    };
+    const deps = makeDeps(runAgent);
+    deps.batcher = createMessageBatcher({ debounceMs: 15 });
+    await handleWebhook(signed(payload({ id: 1, content: "Pertama" })), deps).work;
+    await handleWebhook(signed(payload({ id: 2, content: "Kedua" })), deps).work;
+    expect(seen).toEqual(["Pertama", "Kedua"]);
+  });
+
+  it("merges messages that arrive while a turn runs into the next turn, not a stale second answer each", async () => {
+    const seen: string[] = [];
+    const runAgent: RunAgent = async (job, deliver) => {
+      seen.push(job.text);
+      if (seen.length === 1) await new Promise((r) => setTimeout(r, 60));
+      await deliver({ text: `jawaban ${seen.length}` });
+    };
+    const deps = makeDeps(runAgent);
+    deps.batcher = createMessageBatcher({ debounceMs: 0 });
+    const a = handleWebhook(signed(payload({ id: 1, content: "A" })), deps);
+    await new Promise((r) => setTimeout(r, 10)); // turn 1 is running
+    const b = handleWebhook(signed(payload({ id: 2, content: "B" })), deps);
+    await new Promise((r) => setTimeout(r, 10));
+    const c = handleWebhook(signed(payload({ id: 3, content: "C" })), deps);
+    await Promise.all([a.work, b.work, c.work]);
+    expect(seen).toEqual(["A", "B\nC"]);
   });
 
   it("rejects a bad signature without running the agent", async () => {
@@ -113,6 +183,7 @@ describe("handleWebhook", () => {
     };
     const deps = makeDeps(runAgent);
     const a = handleWebhook(signed(payload({ id: 1 })), deps);
+    await new Promise((r) => setTimeout(r, 5)); // the first turn is now running
     const b = handleWebhook(signed(payload({ id: 2 })), deps);
     await Promise.all([a.work, b.work]);
     expect(order).toEqual(["start 1", "end 1", "start 2", "end 2"]);

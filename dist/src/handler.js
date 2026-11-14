@@ -1,5 +1,6 @@
 import { chunkText } from "./chatwoot-client.js";
 import { formatWithHumanContext } from "./human-context.js";
+import { mergeJobs } from "./batch.js";
 import { QueueExpiredError } from "./queue.js";
 import { classifyWebhook, parseBody, verifySignature } from "./webhook.js";
 function respond(status, action, reason, work) {
@@ -52,7 +53,7 @@ export function handleWebhook(req, deps) {
     // slow model) must not grow memory or storage without limit. A dropped message is logged; the
     // customer can simply write again, and a human can always see the conversation in Chatwoot.
     const queueKey = `${job.accountId}:${job.conversationId}`;
-    const admit = deps.queue.tryAdmit(queueKey);
+    const admit = deps.batcher.check(queueKey, () => deps.queue.tryAdmit(queueKey));
     if (!admit.ok) {
         log.warn(`chatwoot: dropped message ${job.messageId} for conversation ${job.conversationId} (${admit.reason})`);
         return respond(200, "dropped", admit.reason);
@@ -61,8 +62,13 @@ export function handleWebhook(req, deps) {
         return respond(200, "duplicate", "delivery");
     if (!deps.dedupe.claim(`msg:${job.accountId}:${job.messageId}`))
         return respond(200, "duplicate", "message");
+    // Messages from the same customer that arrive close together become one turn, so two quick
+    // messages get one answer instead of two. `take` hands the turn everything collected by the
+    // time it actually starts. `add` runs inside `schedule` on purpose: the gateway only allows
+    // work that was started under `runDetachedWebhookWork`, and the batch's timer, and so the turn
+    // that follows it, inherit that context from where it is created.
     const schedule = deps.schedule ?? ((fn) => fn());
-    const work = schedule(() => deps.queue.run(queueKey, () => processJob(job, deps))).catch((e) => e instanceof QueueExpiredError
+    const work = schedule(() => deps.batcher.add(job, queueKey, (take) => deps.queue.run(queueKey, () => processJob(mergeJobs(take()), deps)))).catch((e) => e instanceof QueueExpiredError
         ? log.warn(`chatwoot: dropped message ${job.messageId} for conversation ${job.conversationId} (${e.message})`)
         : log.error(`chatwoot: unhandled error for conversation ${job.conversationId}: ${String(e)}`));
     return respond(200, "accepted", undefined, work);

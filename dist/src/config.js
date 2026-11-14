@@ -1,5 +1,7 @@
 export const DEFAULT_WEBHOOK_PATH = "/chatwoot/webhook";
 export const DEFAULT_REPLY_TIMEOUT_MS = 120_000;
+export const DEFAULT_MESSAGE_DEBOUNCE_MS = 3000;
+const MAX_MESSAGE_DEBOUNCE_MS = 30_000;
 export const DEFAULT_REPLAY_WINDOW_SECONDS = 300;
 export const DEFAULT_HANDOFF_MARKER = "[[HANDOFF]]";
 const STATUSES = ["pending", "open", "resolved", "snoozed"];
@@ -126,6 +128,10 @@ export function resolveChatwootConfig(cfg) {
         if (!STATUSES.includes(st))
             throw new ChatwootConfigError(`unknown status "${String(st)}"`);
     }
+    const debounce = s.messageDebounceMs ?? DEFAULT_MESSAGE_DEBOUNCE_MS;
+    if (!Number.isInteger(debounce) || debounce < 0 || debounce > MAX_MESSAGE_DEBOUNCE_MS) {
+        throw new ChatwootConfigError(`messageDebounceMs must be a whole number from 0 to ${MAX_MESSAGE_DEBOUNCE_MS}`);
+    }
     const marker = s.handoff?.marker ?? DEFAULT_HANDOFF_MARKER;
     if (marker.trim() === "")
         throw new ChatwootConfigError("handoff.marker must not be empty");
@@ -140,6 +146,7 @@ export function resolveChatwootConfig(cfg) {
         allowedInboxIds: parseInboxIds(s.allowedInboxIds),
         respondStatuses,
         replyTimeoutMs: s.replyTimeoutMs ?? DEFAULT_REPLY_TIMEOUT_MS,
+        messageDebounceMs: debounce,
         replayWindowSeconds: s.replayWindowSeconds ?? DEFAULT_REPLAY_WINDOW_SECONDS,
         stateDir: s.stateDir,
         allowSharedSession: s.allowSharedSession === true,

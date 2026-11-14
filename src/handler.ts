@@ -2,6 +2,7 @@ import { chunkText, type ChatwootClient } from "./chatwoot-client.js";
 import type { DedupeStore } from "./dedupe.js";
 import { formatWithHumanContext, type HumanContextStore } from "./human-context.js";
 import type { OwnMessageTracker } from "./own-messages.js";
+import { mergeJobs, type MessageBatcher } from "./batch.js";
 import { QueueExpiredError, type KeyedQueue } from "./queue.js";
 import type { InboundJob, Logger, ReplyPayload, ResolvedChatwootConfig } from "./types.js";
 import { classifyWebhook, parseBody, verifySignature } from "./webhook.js";
@@ -14,6 +15,8 @@ export interface HandlerDeps {
   client: ChatwootClient;
   dedupe: DedupeStore;
   queue: KeyedQueue;
+  /** Groups messages that arrive close together into one agent turn. */
+  batcher: MessageBatcher;
   /** What human agents said while the bot was not in charge. */
   humanContext: HumanContextStore;
   /** Messages this plugin sent itself, so they are never mistaken for a human agent's. */
@@ -92,7 +95,7 @@ export function handleWebhook(req: WebhookRequest, deps: HandlerDeps): WebhookRe
   // slow model) must not grow memory or storage without limit. A dropped message is logged; the
   // customer can simply write again, and a human can always see the conversation in Chatwoot.
   const queueKey = `${job.accountId}:${job.conversationId}`;
-  const admit = deps.queue.tryAdmit(queueKey);
+  const admit = deps.batcher.check(queueKey, () => deps.queue.tryAdmit(queueKey));
   if (!admit.ok) {
     log.warn(`chatwoot: dropped message ${job.messageId} for conversation ${job.conversationId} (${admit.reason})`);
     return respond(200, "dropped", admit.reason);
@@ -101,8 +104,15 @@ export function handleWebhook(req: WebhookRequest, deps: HandlerDeps): WebhookRe
   if (delivery && !deps.dedupe.claim(`delivery:${delivery}`)) return respond(200, "duplicate", "delivery");
   if (!deps.dedupe.claim(`msg:${job.accountId}:${job.messageId}`)) return respond(200, "duplicate", "message");
 
+  // Messages from the same customer that arrive close together become one turn, so two quick
+  // messages get one answer instead of two. `take` hands the turn everything collected by the
+  // time it actually starts. `add` runs inside `schedule` on purpose: the gateway only allows
+  // work that was started under `runDetachedWebhookWork`, and the batch's timer, and so the turn
+  // that follows it, inherit that context from where it is created.
   const schedule = deps.schedule ?? ((fn: () => Promise<void>) => fn());
-  const work = schedule(() => deps.queue.run(queueKey, () => processJob(job, deps))).catch((e) =>
+  const work = schedule(() =>
+    deps.batcher.add(job, queueKey, (take) => deps.queue.run(queueKey, () => processJob(mergeJobs(take()), deps))),
+  ).catch((e) =>
     e instanceof QueueExpiredError
       ? log.warn(`chatwoot: dropped message ${job.messageId} for conversation ${job.conversationId} (${e.message})`)
       : log.error(`chatwoot: unhandled error for conversation ${job.conversationId}: ${String(e)}`),

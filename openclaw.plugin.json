@@ -30,6 +30,12 @@
             "items": { "type": "string", "enum": ["pending", "open", "resolved", "snoozed"] }
           },
           "replyTimeoutMs": { "type": "integer", "minimum": 1000 },
+          "messageDebounceMs": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 30000,
+            "description": "Wait this long after a customer's last message before answering, so quick follow-ups get one answer (default 3000; 0 = answer each message separately)"
+          },
           "replayWindowSeconds": { "type": "integer", "minimum": 1 },
           "stateDir": { "type": "string", "description": "Directory for the durable dedupe log" },
           "includeHumanReplies": {

@@ -182,3 +182,21 @@ describe("transport security", () => {
     expect(() => resolveChatwootConfig(wrap({ ...base, baseUrl: "https://user:pw@chat.example.com" }))).toThrow(/credentials/);
   });
 });
+
+describe("messageDebounceMs", () => {
+  const wrap = (c: Record<string, unknown>) => ({
+    channels: { chatwoot: { baseUrl: "https://chat.example.com", accountId: 1, apiToken: "t", webhookSecret: "s", ...c } },
+  });
+
+  it("defaults to 3 seconds", () => {
+    expect(resolveChatwootConfig(wrap({})).messageDebounceMs).toBe(3000);
+  });
+
+  it("accepts 0 to answer every message separately", () => {
+    expect(resolveChatwootConfig(wrap({ messageDebounceMs: 0 })).messageDebounceMs).toBe(0);
+  });
+
+  it.each([-1, 1.5, 30_001, "3000"])("rejects %s", (messageDebounceMs) => {
+    expect(() => resolveChatwootConfig(wrap({ messageDebounceMs }))).toThrow(/messageDebounceMs/);
+  });
+});
