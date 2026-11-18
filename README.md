@@ -52,6 +52,10 @@ Berapa lama proses klaimnya?
 
 Customers often send a thought in pieces ("Kalau kirim ke Rembang 59252", then "Berapa ongkirnya"). The plugin waits `messageDebounceMs` (default 3 seconds) after the last message, then gives the agent all of them as one turn, so there is one answer instead of two. A burst is never held longer than 15 seconds, and at most 20 messages or 12,000 characters go into one turn. While the agent is still answering, newer messages wait and are merged into the next turn, instead of each getting its own stale answer. If a turn waits more than 5 minutes behind others and never starts, the conversation is handed to a human (reason "bot was too busy to answer in time") rather than left in silence, and the next message is handled normally. The cost is the wait: every reply starts up to `messageDebounceMs` later. Set it to `0` to answer every message separately (messages that arrive while a turn runs are still merged).
 
+### Retries
+
+A turn that fails before it really starts (OpenClaw reports the agent's session changed while starting work, or the gateway is restarting) is retried up to 2 more times, after 1 and 3 seconds, as long as nothing has been sent to the customer yet. Nothing else is retried: a timeout, a model error or an empty answer goes straight to a human, because the turn may already have run tools and repeating it, or answering twice, is worse.
+
 ### Handoff to a human
 
 The conversation is set to `open` (which stops the bot), the customer gets a message, a private note explains why, and a `bot-handoff` label is added. It happens when:

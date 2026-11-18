@@ -1,6 +1,7 @@
 import { chunkText, type ChatwootClient } from "./chatwoot-client.js";
 import type { DedupeStore } from "./dedupe.js";
 import { formatWithHumanContext, type HumanContextStore } from "./human-context.js";
+import { isTransientDispatchError } from "./failures.js";
 import type { OwnMessageTracker } from "./own-messages.js";
 import type { ActiveTurns } from "./active-turns.js";
 import { mergeJobs, type MessageBatcher } from "./batch.js";
@@ -10,6 +11,9 @@ import { classifyWebhook, parseBody, verifySignature } from "./webhook.js";
 
 /** Runs one agent turn for a job and streams replies to `deliver`. Provided by the OpenClaw adapter. */
 export type RunAgent = (job: InboundJob, deliver: (payload: ReplyPayload) => Promise<void>) => Promise<void>;
+
+/** Pauses before each retry of a turn that failed before it started. */
+const RETRY_DELAYS_MS = [1000, 3000];
 
 export interface HandlerDeps {
   config: ResolvedChatwootConfig;
@@ -27,6 +31,8 @@ export interface HandlerDeps {
   runAgent: RunAgent;
   log: Logger;
   now?: () => number;
+  /** Pause used between retries; tests replace it. */
+  sleep?: (ms: number) => Promise<void>;
   /**
    * Starts post-acknowledgement work. In the gateway this must be `runDetachedWebhookWork`,
    * otherwise work started after the HTTP response is rejected as outside any admitted request.
@@ -198,11 +204,10 @@ async function processJob(job: InboundJob, deps: HandlerDeps): Promise<void> {
     }
   };
 
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    // The host cannot cancel a turn, so a turn that times out keeps running. It stays counted
-    // until it really settles, and no new turn starts while the limit is reached or this
-    // conversation still has one running.
+  // One attempt at the agent turn. The host cannot cancel a turn, so one that times out keeps
+  // running; it stays counted until it really settles, and no new turn starts while the limit is
+  // reached or this conversation still has one running.
+  const attemptTurn = async (): Promise<void> => {
     const turn = deps.active.tryBegin(humanKey);
     if (!turn.ok) {
       throw new Error(
@@ -212,6 +217,7 @@ async function processJob(job: InboundJob, deps: HandlerDeps): Promise<void> {
       );
     }
     let timedOut = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const dispatch = (async () => deps.runAgent(agentJob, deliver))();
     dispatch.then(
       () => {
@@ -223,19 +229,42 @@ async function processJob(job: InboundJob, deps: HandlerDeps): Promise<void> {
         if (timedOut) log.info(`chatwoot: the timed-out agent turn for conversation ${id} has now ended with an error: ${String(e)}`);
       },
     );
-    await Promise.race([
-      dispatch,
-      new Promise<never>((_, reject) => {
-        timer = setTimeout(() => {
-          timedOut = true;
-          log.warn(
-            `chatwoot: agent turn for conversation ${id} is still running after ${config.replyTimeoutMs}ms; ` +
-              `it cannot be cancelled and stays counted (${deps.active.count()} active)`,
-          );
-          reject(new Error(`agent did not finish within ${config.replyTimeoutMs}ms`));
-        }, config.replyTimeoutMs);
-      }),
-    ]);
+    try {
+      await Promise.race([
+        dispatch,
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => {
+            timedOut = true;
+            log.warn(
+              `chatwoot: agent turn for conversation ${id} is still running after ${config.replyTimeoutMs}ms; ` +
+                `it cannot be cancelled and stays counted (${deps.active.count()} active)`,
+            );
+            reject(new Error(`agent did not finish within ${config.replyTimeoutMs}ms`));
+          }, config.replyTimeoutMs);
+        }),
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  };
+
+  try {
+    // Retry only when the failure says the turn never really started (the session changed under
+    // it, the gateway was restarting) and nothing has been sent to the customer yet. Anything else
+    // (a timeout, a model error, an empty answer) is not retried: the turn may already have run
+    // tools, and repeating them or answering twice is worse than a human taking over.
+    const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+    for (let attempt = 0; ; attempt++) {
+      try {
+        await attemptTurn();
+        break;
+      } catch (e) {
+        const delay = RETRY_DELAYS_MS[attempt];
+        if (delay === undefined || replied || handedOff || !isTransientDispatchError(e)) throw e;
+        log.warn(`chatwoot: agent turn for conversation ${id} failed before starting (${String(e)}); retrying in ${delay}ms (${attempt + 1}/${RETRY_DELAYS_MS.length})`);
+        await sleep(delay);
+      }
+    }
     // A turn that ends without sending the customer anything (for example the model stopped after
     // its tool calls, or the runtime's own "no answer" notice was withheld) would leave the
     // customer waiting in silence. Hand it to a human instead.
@@ -248,8 +277,6 @@ async function processJob(job: InboundJob, deps: HandlerDeps): Promise<void> {
       handedOff = true;
       await safeHandoff(job, `bot error: ${e instanceof Error ? e.message : String(e)}`, deps);
     }
-  } finally {
-    if (timer) clearTimeout(timer);
   }
 }
 

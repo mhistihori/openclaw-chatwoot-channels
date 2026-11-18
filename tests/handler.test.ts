@@ -171,6 +171,75 @@ describe("handleWebhook", () => {
     expect(deps.client.calls).toEqual([]);
   });
 
+  describe("retrying a turn that failed before it started", () => {
+    const refresh = () =>
+      Object.assign(new Error('Session "agent:x:chatwoot:direct:1-42" changed while starting work. Retry.'), {
+        name: "DispatchSessionRefreshRequiredError",
+      });
+    const withSleep = (runAgent: RunAgent) => {
+      const deps = makeDeps(runAgent);
+      const sleep = vi.fn(async (_ms: number) => {});
+      deps.sleep = sleep;
+      return { deps, sleep };
+    };
+    const handedOff = (deps: ReturnType<typeof makeDeps>) => deps.client.calls.some((c) => c.op === "setStatus");
+
+    it("answers normally when the second attempt works, without handing off", async () => {
+      let calls = 0;
+      const { deps, sleep } = withSleep(async (_j, deliver) => {
+        if (++calls === 1) throw refresh();
+        await deliver({ text: "Jawaban" });
+      });
+      await handleWebhook(signed(payload()), deps).work;
+      expect(calls).toBe(2);
+      expect(sleep).toHaveBeenCalledWith(1000);
+      expect(handedOff(deps)).toBe(false);
+      expect(deps.client.calls).toEqual([{ op: "sendMessage", args: [42, "Jawaban"] }]);
+    });
+
+    it("tries up to three times, then hands over to a human", async () => {
+      let calls = 0;
+      const { deps, sleep } = withSleep(async () => {
+        calls++;
+        throw refresh();
+      });
+      await handleWebhook(signed(payload()), deps).work;
+      expect(calls).toBe(3);
+      expect(sleep.mock.calls.map((c) => c[0])).toEqual([1000, 3000]);
+      expect(handedOff(deps)).toBe(true);
+    });
+
+    it("does not retry a model error, a timeout or an empty answer", async () => {
+      for (const run of [
+        async () => {
+          throw new Error("model overloaded");
+        },
+        async () => new Promise<void>(() => {}), // never finishes: times out
+        async () => {}, // finishes without sending anything
+      ] as RunAgent[]) {
+        const calls = vi.fn(run);
+        const { deps, sleep } = withSleep(calls);
+        await handleWebhook(signed(payload()), deps).work;
+        expect(calls).toHaveBeenCalledTimes(1);
+        expect(sleep).not.toHaveBeenCalled();
+        expect(handedOff(deps)).toBe(true);
+      }
+    });
+
+    it("does not retry once something has been sent to the customer", async () => {
+      let calls = 0;
+      const { deps, sleep } = withSleep(async (_j, deliver) => {
+        calls++;
+        await deliver({ text: "Sebagian jawaban" });
+        throw refresh();
+      });
+      await handleWebhook(signed(payload()), deps).work;
+      expect(calls).toBe(1);
+      expect(sleep).not.toHaveBeenCalled();
+      expect(handedOff(deps)).toBe(true);
+    });
+  });
+
   it("answers a message that comes after the quiet window separately", async () => {
     const seen: string[] = [];
     const runAgent: RunAgent = async (job, deliver) => {

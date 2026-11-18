@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createFailureTracker, judgeReply, looksLikeHostNotice } from "../src/failures.js";
+import { createFailureTracker, isTransientDispatchError, judgeReply, looksLikeHostNotice } from "../src/failures.js";
 
 describe("looksLikeHostNotice", () => {
   it.each([
@@ -78,5 +78,28 @@ describe("failure tracker", () => {
     const t = createFailureTracker();
     t.record("a", "  ");
     expect(t.take("a")).toBe("agent reported an error");
+  });
+});
+
+describe("isTransientDispatchError", () => {
+  const named = (name: string, message: string) => Object.assign(new Error(message), { name });
+
+  it.each([
+    named("DispatchSessionRefreshRequiredError", 'Session "agent:krbpro_cs:chatwoot:direct:1-137" changed while starting work. Retry.'),
+    new Error("Session x changed while starting work. Retry."),
+    named("GatewayDrainingError", "Gateway is temporarily unavailable. Please try again shortly."),
+  ])("retries %s", (e) => {
+    expect(isTransientDispatchError(e)).toBe(true);
+  });
+
+  it.each([
+    new Error("agent did not finish within 120000ms"),
+    new Error("The tool run finished, but no final summary was produced."),
+    new Error("⚠️ Agent couldn't generate a response. Please try again."),
+    new Error("429 rate limited"),
+    "boom",
+    undefined,
+  ])("does not retry %s", (e) => {
+    expect(isTransientDispatchError(e)).toBe(false);
   });
 });

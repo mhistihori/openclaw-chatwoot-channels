@@ -61,3 +61,15 @@ export function judgeReply(payload) {
         return "fail";
     return "send";
 }
+/**
+ * Failures that mean the turn never really started, so running it again is safe and cannot
+ * repeat tool actions or answer twice: the agent's session changed while the turn was starting
+ * (OpenClaw's own message ends with "Retry."), or the gateway was restarting.
+ */
+export function isTransientDispatchError(e) {
+    const text = `${e instanceof Error ? `${e.name} ${e.message}` : String(e)}`.toLowerCase();
+    return (text.includes("dispatchsessionrefreshrequired") ||
+        text.includes("changed while starting work") ||
+        text.includes("gatewaydraining") ||
+        text.includes("gateway is temporarily unavailable"));
+}
