@@ -2,6 +2,7 @@ import { createChannelPluginBase, createChatChannelPlugin } from "openclaw/plugi
 import { chunkText, createChatwootClient } from "./chatwoot-client.js";
 import { inspectChatwootConfig, resolveChatwootConfig } from "./config.js";
 import { ownMessages } from "./own-messages.js";
+import { buildFormattingHints } from "./prompt-hints.js";
 import { parseTarget } from "./target.js";
 export const CHANNEL_ID = "chatwoot";
 function resolveAccount(cfg, accountId) {
@@ -51,6 +52,8 @@ export const chatwootPlugin = createChatChannelPlugin({
                 docsPath: "/channels/chatwoot",
                 blurb: "Answer Chatwoot conversations with an OpenClaw agent and hand off to human agents.",
             },
+            // Teaches the agent the plugin's own tags ([[HANDOFF]], [[INTERNAL]]) on every Chatwoot turn.
+            agentPrompt: { inboundFormattingHints: ({ cfg }) => buildFormattingHints(cfg) },
             setup: {
                 applyAccountConfig: ({ cfg, input }) => {
                     const channels = (cfg.channels ?? {});

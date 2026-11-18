@@ -1,11 +1,14 @@
 import { chunkText } from "./chatwoot-client.js";
 import { formatWithHumanContext } from "./human-context.js";
 import { isTransientDispatchError } from "./failures.js";
+import { splitInternal } from "./internal.js";
 import { mergeJobs } from "./batch.js";
 import { QueueExpiredError } from "./queue.js";
 import { classifyWebhook, parseBody, verifySignature } from "./webhook.js";
 /** Pauses before each retry of a turn that failed before it started. */
 const RETRY_DELAYS_MS = [1000, 3000];
+/** Starts every private note made from an [[INTERNAL]] block. */
+const INTERNAL_NOTE_PREFIX = "Catatan dari bot:\n";
 function respond(status, action, reason, work) {
     return { status, body: { ok: status < 400, action, ...(reason ? { reason } : {}) }, ...(work ? { work } : {}) };
 }
@@ -128,10 +131,14 @@ async function processJob(job, deps) {
     let handedOff = false;
     let replied = false; // something customer-visible went out during this turn
     const marker = config.handoff.marker;
+    const internalState = { open: false };
     const deliver = async (payload) => {
         if (handedOff)
             return; // A late reply must not talk over the human who took over.
-        let text = payload.text ?? "";
+        // Text inside [[INTERNAL]]...[[/INTERNAL]] is for the human agents: it goes to a private
+        // note and never to the customer. The handoff marker is looked for in the customer text only.
+        const split = splitInternal(payload.text ?? "", internalState);
+        let text = split.customer;
         const wantsHandoff = text.includes(marker);
         if (wantsHandoff)
             text = text.split(marker).join("").trim();
@@ -141,6 +148,16 @@ async function processJob(job, deps) {
             for (const part of chunkText(body))
                 await sendOwn(deps, id, part);
             replied = true;
+        }
+        if (split.internal.length > 0) {
+            try {
+                for (const part of chunkText(`${INTERNAL_NOTE_PREFIX}${split.internal.join("\n\n")}`)) {
+                    await deps.client.sendMessage(id, part, { private: true });
+                }
+            }
+            catch (e) {
+                log.warn(`chatwoot: could not post the internal note for conversation ${id}: ${String(e)}`);
+            }
         }
         if (wantsHandoff) {
             handedOff = true;
@@ -157,6 +174,7 @@ async function processJob(job, deps) {
                 ? "a previous agent turn for this conversation is still running"
                 : "too many agent turns are still running");
         }
+        internalState.open = false; // a failed earlier attempt must not leave a block open
         let timedOut = false;
         let timer;
         const dispatch = (async () => deps.runAgent(agentJob, deliver))();

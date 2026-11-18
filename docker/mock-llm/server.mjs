@@ -66,6 +66,11 @@ const server = createServer((req, res) => {
     // messages, and every smoke test starts a fresh conversation, so there is no stale history.
     const allUserText = messages.filter((m) => m?.role === "user").map(textOf).join("\n");
     console.log(`[mock-llm] stream=${Boolean(body.stream)} user="${text.slice(-80).replace(/\n/g, " ")}"`);
+    // Lets a test see whether the channel's delivery-format hints reached the model.
+    const wholeRequest = JSON.stringify(body);
+    console.log(
+      `[mock-llm] prompt has delivery_format=${wholeRequest.includes("openclaw.delivery_format.v1")} internal_tag=${wholeRequest.includes("[[INTERNAL]]")} handoff_tag=${wholeRequest.includes("[[HANDOFF]]")}`,
+    );
 
     if (allUserText.includes("ERRORTEST")) {
       res.statusCode = 500;

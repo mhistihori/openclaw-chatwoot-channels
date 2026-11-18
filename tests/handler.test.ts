@@ -171,6 +171,67 @@ describe("handleWebhook", () => {
     expect(deps.client.calls).toEqual([]);
   });
 
+  describe("internal blocks", () => {
+    const notes = (deps: ReturnType<typeof makeDeps>) =>
+      deps.client.calls.filter((c) => c.op === "sendMessage" && (c.args as unknown[])[2] !== undefined);
+
+    it("sends the customer text as a reply and the internal block as a private note", async () => {
+      const { deps } = await run(async (_j, deliver) => {
+        await deliver({ text: "Pesanan Kakak sedang dicek.\n[[INTERNAL]]Stok habis, hubungi gudang.[[/INTERNAL]]" });
+      });
+      expect(deps.client.calls).toEqual([
+        { op: "sendMessage", args: [42, "Pesanan Kakak sedang dicek."] },
+        { op: "sendMessage", args: [42, "Catatan dari bot:\nStok habis, hubungi gudang.", { private: true }] },
+      ]);
+    });
+
+    it("never shows internal text to the customer, even if the tag is never closed", async () => {
+      const { deps } = await run(async (_j, deliver) => {
+        await deliver({ text: "Halo Kak.\n[[INTERNAL]]harga modal 400rb" });
+      });
+      const customerTexts = deps.client.calls.filter((c) => (c.args as unknown[])[2] === undefined).map((c) => String((c.args as unknown[])[1]));
+      expect(customerTexts).toEqual(["Halo Kak."]);
+      expect(notes(deps)).toHaveLength(1);
+    });
+
+    it("hands over to a human when the whole reply was internal, and still posts the note", async () => {
+      const { deps } = await run(async (_j, deliver) => {
+        await deliver({ text: "[[INTERNAL]]laporan saja[[/INTERNAL]]" });
+      });
+      expect(deps.client.calls.some((c) => c.op === "setStatus")).toBe(true);
+      expect(JSON.stringify(deps.client.calls)).toContain("laporan saja");
+      expect(JSON.stringify(deps.client.calls)).toContain("agent produced no reply");
+    });
+
+    it("ignores a handoff marker that sits inside an internal block", async () => {
+      const { deps } = await run(async (_j, deliver) => {
+        await deliver({ text: "Siap Kak. [[INTERNAL]]jangan tulis [[HANDOFF]] di sini[[/INTERNAL]]" });
+      });
+      expect(deps.client.calls.some((c) => c.op === "setStatus")).toBe(false);
+    });
+
+    it("still answers the customer when the private note cannot be posted", async () => {
+      const client = fakeClient();
+      const realSend = client.sendMessage;
+      client.sendMessage = async (conversationId, content, opts) => {
+        if (opts?.private) {
+          client.calls.push({ op: "sendMessage", args: [conversationId, content, opts] });
+          throw new Error("note failed");
+        }
+        return realSend(conversationId, content, opts);
+      };
+      const { deps } = await run(
+        async (_j, deliver) => {
+          await deliver({ text: "Jawaban.[[INTERNAL]]catatan[[/INTERNAL]]" });
+        },
+        payload(),
+        { client },
+      );
+      expect(deps.client.calls[0]?.args.slice(0, 2)).toEqual([42, "Jawaban."]);
+      expect(deps.client.calls.some((c) => c.op === "setStatus")).toBe(false);
+    });
+  });
+
   describe("retrying a turn that failed before it started", () => {
     const refresh = () =>
       Object.assign(new Error('Session "agent:x:chatwoot:direct:1-42" changed while starting work. Retry.'), {
